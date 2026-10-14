@@ -1,9 +1,9 @@
 import { useCallback,useEffect,useState,type FormEvent } from "react";
-import { BookHeart,CalendarDays,Check,Heart,LoaderCircle,MessageCircle,Send,Trash2,TrendingUp } from "lucide-react";
+import { BookHeart,Check,Heart,LoaderCircle,MessageCircle,Send,Trash2,TrendingUp } from "lucide-react";
 import { deleteJournal,getCarePartnerId,listCheckins,listJournal,listMessages,saveCheckin,saveJournal,sendCareMessage,type CheckIn,type JournalEntry,type CareMessage } from "../lib/careData";
 type Props={view:"messages"|"checkin"|"journal"|"reports";spaceId:string;userId:string;role:"admin"|"friend";onNotice:(s:string)=>void;onError:(s:string)=>void};
 const moodOptions=[["great","Great"],["okay","Okay"],["low","Low"],["anxious","Anxious"],["tired","Tired"],["heavy","Heavy"]];
-export default function CareDataView({view,spaceId,userId,role,onNotice,onError}:Props){
+export default function CareDataView({view,spaceId,userId,onNotice,onError}:Props){
  const [messages,setMessages]=useState<CareMessage[]>([]),[checkins,setCheckins]=useState<CheckIn[]>([]),[entries,setEntries]=useState<JournalEntry[]>([]);
  const [loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[body,setBody]=useState(""),[mood,setMood]=useState("okay"),[energy,setEnergy]=useState(3),[note,setNote]=useState(""),[share,setShare]=useState(false),[journalText,setJournalText]=useState(""),[journalDate,setJournalDate]=useState(new Date().toISOString().slice(0,10)),[editId,setEditId]=useState<string|undefined>();
  const refresh=useCallback(async()=>{setLoading(true);try{if(view==="messages")setMessages(await listMessages(spaceId));if(view==="checkin"||view==="reports")setCheckins(await listCheckins(spaceId));if(view==="journal")setEntries(await listJournal());}catch(e){onError(e instanceof Error?e.message:"Couldn't load this section.");}finally{setLoading(false);}},[view,spaceId]);
