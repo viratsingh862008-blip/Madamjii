@@ -56,6 +56,19 @@ create table public.consent_records (
   created_at timestamptz not null default now()
 );
 
+create table public.member_preferences (
+  id uuid primary key default gen_random_uuid(),
+  care_space_id uuid not null references public.care_spaces(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  timezone text not null default 'Asia/Kolkata',
+  quiet_hours_start time not null default '23:00',
+  quiet_hours_end time not null default '07:00',
+  push_enabled boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (care_space_id, user_id)
+);
+
 create table public.care_schedules (
   id uuid primary key default gen_random_uuid(),
   care_space_id uuid not null references public.care_spaces(id) on delete cascade,
@@ -237,6 +250,8 @@ begin
   insert into public.consent_records(care_space_id, user_id, consent_type, scope, version)
   values (new.id, new.created_by, 'shared_care',
     '{"shared_schedules":true,"daily_summary":false,"message_history":true}'::jsonb, 1);
+  insert into public.member_preferences(care_space_id, user_id, timezone)
+  values (new.id, new.created_by, new.timezone);
   return new;
 end;
 $$;
@@ -278,6 +293,23 @@ create trigger guard_message_identity_before_update
 before update on public.care_messages
 for each row execute function private.guard_message_identity();
 
+create or replace function private.guard_checkin_identity()
+returns trigger language plpgsql set search_path = ''
+as $
+begin
+  if new.care_space_id is distinct from old.care_space_id
+    or new.user_id is distinct from old.user_id
+    or new.created_at is distinct from old.created_at then
+    raise exception 'Check-in owner, care space and creation time are immutable'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$;
+create trigger guard_checkin_identity_before_update
+before update on public.check_ins
+for each row execute function private.guard_checkin_identity();
+
 create or replace function private.sync_checkin_summary()
 returns trigger language plpgsql security definer set search_path = ''
 as $$
@@ -311,6 +343,7 @@ revoke all on function private.add_owner_membership() from public, anon, authent
 revoke all on function private.sync_checkin_summary() from public, anon, authenticated;
 revoke all on function private.guard_schedule_identity() from public, anon, authenticated;
 revoke all on function private.guard_message_identity() from public, anon, authenticated;
+revoke all on function private.guard_checkin_identity() from public, anon, authenticated;
 grant execute on function private.is_active_member(uuid) to authenticated;
 grant execute on function private.current_member_role(uuid) to authenticated;
 
@@ -337,16 +370,23 @@ $$;
 
 create or replace function public.accept_care_invitation(
   p_token text,
-  p_consent_scope jsonb default '{"shared_schedules":true,"daily_summary":false,"message_history":true}'::jsonb
+  p_consent_scope jsonb default '{"shared_schedules":true,"daily_summary":false,"message_history":true}'::jsonb,
+  p_timezone text default 'Asia/Kolkata'
 )
 returns uuid language plpgsql security definer set search_path = ''
-as $$
-declare v_invite public.care_invitations%rowtype; v_active_count integer; v_scope jsonb;
+as $
+declare v_invite public.care_invitations%rowtype; v_active_count integer; v_scope jsonb; v_timezone text;
 begin
   if auth.uid() is null then raise exception 'Authentication required' using errcode = '42501'; end if;
   if p_token is null or p_token !~ '^[a-f0-9]{64}$' then
     raise exception 'Invalid invitation token' using errcode = '22023';
   end if;
+  if p_timezone is null or not exists (
+    select 1 from pg_catalog.pg_timezone_names where name = p_timezone
+  ) then
+    raise exception 'Invalid timezone' using errcode = '22023';
+  end if;
+  v_timezone := p_timezone;
   v_scope := jsonb_build_object(
     'shared_schedules', coalesce((p_consent_scope ->> 'shared_schedules')::boolean, false),
     'daily_summary', coalesce((p_consent_scope ->> 'daily_summary')::boolean, false),
@@ -368,6 +408,9 @@ begin
     values (v_invite.care_space_id, auth.uid(), 'friend', 'active');
   insert into public.consent_records(care_space_id, user_id, consent_type, scope, version)
     values (v_invite.care_space_id, auth.uid(), 'shared_care', v_scope, 1);
+  insert into public.member_preferences(care_space_id, user_id, timezone)
+    values (v_invite.care_space_id, auth.uid(), v_timezone);
+  update public.care_spaces set timezone = v_timezone where id = v_invite.care_space_id;
   update public.care_invitations set accepted_at = now(), accepted_by = auth.uid() where id = v_invite.id;
   insert into public.audit_events(care_space_id, actor_user_id, entity_type, entity_id, action, metadata)
     values (v_invite.care_space_id, auth.uid(), 'care_invitation', v_invite.id, 'accepted', '{"source":"invitation_link"}'::jsonb);
@@ -405,14 +448,15 @@ end;
 $$;
 
 revoke all on function public.create_care_invitation(uuid) from public, anon;
-revoke all on function public.accept_care_invitation(text, jsonb) from public, anon;
+revoke all on function public.accept_care_invitation(text, jsonb, text) from public, anon;
 revoke all on function public.review_shared_schedule(uuid, integer, text, text) from public, anon;
 grant execute on function public.create_care_invitation(uuid) to authenticated;
-grant execute on function public.accept_care_invitation(text, jsonb) to authenticated;
+grant execute on function public.accept_care_invitation(text, jsonb, text) to authenticated;
 grant execute on function public.review_shared_schedule(uuid, integer, text, text) to authenticated;
 
 alter table public.care_spaces enable row level security;
 alter table public.care_members enable row level security;
+alter table public.member_preferences enable row level security;
 alter table public.care_invitations enable row level security;
 alter table public.consent_records enable row level security;
 alter table public.care_schedules enable row level security;
@@ -430,7 +474,9 @@ alter table public.audit_events enable row level security;
 alter table public.retention_runs enable row level security;
 
 grant select, insert on public.care_spaces to authenticated;
-grant update (name, timezone) on public.care_spaces to authenticated;
+grant update (name) on public.care_spaces to authenticated;
+grant select, update (timezone, quiet_hours_start, quiet_hours_end, push_enabled)
+  on public.member_preferences to authenticated;
 grant select on public.care_members to authenticated;
 grant select on public.consent_records to authenticated;
 grant select, insert, update, delete on public.care_schedules to authenticated;
@@ -462,6 +508,11 @@ create policy "members read membership in their space" on public.care_members fo
   using (user_id = auth.uid() or private.is_active_member(care_space_id));
 create policy "users read their own consent" on public.consent_records for select to authenticated
   using (user_id = auth.uid());
+create policy "users read their own member preferences" on public.member_preferences for select to authenticated
+  using (user_id = auth.uid() and private.is_active_member(care_space_id));
+create policy "users update their own member preferences" on public.member_preferences for update to authenticated
+  using (user_id = auth.uid() and private.is_active_member(care_space_id))
+  with check (user_id = auth.uid() and private.is_active_member(care_space_id));
 
 create policy "members read permitted schedules" on public.care_schedules for select to authenticated
   using (private.is_active_member(care_space_id) and (
