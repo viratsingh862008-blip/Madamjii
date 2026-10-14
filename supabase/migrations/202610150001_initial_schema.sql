@@ -481,7 +481,7 @@ grant select on public.care_members to authenticated;
 grant select on public.consent_records to authenticated;
 grant select, insert, update, delete on public.care_schedules to authenticated;
 grant select on public.schedule_approvals to authenticated;
-grant select, insert, update on public.task_occurrences to authenticated;
+grant select on public.task_occurrences to authenticated;
 grant select, insert, update on public.care_messages to authenticated;
 grant select, insert, update, delete on public.check_ins to authenticated;
 grant select on public.shared_check_in_summaries to authenticated;
@@ -552,7 +552,7 @@ create policy "members read messages with mutual history consent" on public.care
       and cr.user_id = care_messages.recipient_user_id and cr.consent_type = 'shared_care'
       and cr.revoked_at is null and cr.scope ->> 'message_history' = 'true'));
 create policy "members send messages with mutual history consent" on public.care_messages for insert to authenticated
-  with check (sender_user_id = auth.uid() and private.is_active_member(care_space_id)
+  with check (sender_user_id = auth.uid() and status in ('draft', 'scheduled') and private.is_active_member(care_space_id)
     and exists (select 1 from public.care_members cm where cm.care_space_id = care_messages.care_space_id
       and cm.user_id = care_messages.recipient_user_id and cm.membership_status = 'active')
     and exists (select 1 from public.consent_records cr where cr.care_space_id = care_messages.care_space_id
