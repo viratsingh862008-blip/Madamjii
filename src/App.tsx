@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   Activity, ArrowRight, BarChart3, Bell, BookHeart, CalendarDays, Check, CheckCircle2,
   ChevronRight, CircleHelp, Clock3, Copy, Droplets, Heart, HeartHandshake, LayoutDashboard,
@@ -58,7 +58,7 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const inviteHandled = useRef(false);
+  const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(() => new URLSearchParams(window.location.search).get("invite"));
 
   useEffect(() => {
     if (!supabase) { setAuthLoading(false); return; }
@@ -91,20 +91,27 @@ export default function App() {
       .finally(() => setMembershipLoading(false));
   }, [session?.user.id]);
 
-  useEffect(() => {
-    const token = new URLSearchParams(window.location.search).get("invite");
-    if (!session || !token || inviteHandled.current) return;
-    inviteHandled.current = true;
+  async function handleAcceptInvite(scope: { shared_schedules: boolean; daily_summary: boolean; message_history: boolean }) {
+    if (!pendingInviteToken) return;
     setBusy(true);
-    acceptCareInvitation(token)
-      .then(async () => {
-        window.history.replaceState({}, "", window.location.pathname);
-        setNotice("You're connected. Your shared care space is ready.");
-        await refreshMemberships();
-      })
-      .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "This invitation couldn't be accepted."))
-      .finally(() => setBusy(false));
-  }, [session?.user.id]);
+    setError("");
+    try {
+      await acceptCareInvitation(pendingInviteToken, scope);
+      setPendingInviteToken(null);
+      window.history.replaceState({}, "", window.location.pathname);
+      setNotice("You're connected. Your shared care space is ready.");
+      await refreshMemberships();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "This invitation couldn't be accepted.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  function declineInvite() {
+    setPendingInviteToken(null);
+    window.history.replaceState({}, "", window.location.pathname);
+    setNotice("Invitation declined. No shared care data was accessed.");
+  }
 
   const membership = memberships[0];
   const isPreview = !supabaseConfigured;
@@ -145,6 +152,9 @@ export default function App() {
   if (authLoading) return <LoadingScreen label="Opening your care space…" />;
   if (supabaseConfigured && !session) {
     return <AuthScreen email={email} setEmail={setEmail} onSubmit={handleMagicLink} sent={magicLinkSent} busy={busy} error={error} />;
+  }
+  if (supabaseConfigured && session && pendingInviteToken) {
+    return <InvitationConsentScreen busy={busy} error={error} onAccept={handleAcceptInvite} onDecline={declineInvite} />;
   }
   if (supabaseConfigured && session && membershipLoading) return <LoadingScreen label="Loading your private space…" />;
   if (supabaseConfigured && session && memberships.length === 0) {
@@ -202,6 +212,32 @@ function AuthScreen(props: { email: string; setEmail: (value: string) => void; o
       {props.error && <InlineNotice kind="error" text={props.error} onClose={() => undefined} />}<div className="mt-8 flex items-center gap-3 text-xs text-muted"><div className="h-px flex-1 bg-line" /> No public profiles <div className="h-px flex-1 bg-line" /></div></div>
   </div></div>;
 }
+function InvitationConsentScreen(props: {
+  busy: boolean;
+  error: string;
+  onAccept: (scope: { shared_schedules: boolean; daily_summary: boolean; message_history: boolean }) => void;
+  onDecline: () => void;
+}) {
+  const [sharedSchedules, setSharedSchedules] = useState(false);
+  const [messageHistory, setMessageHistory] = useState(false);
+  const [dailySummary, setDailySummary] = useState(false);
+  return <div className="min-h-screen bg-cream px-4 py-10"><section className="mx-auto max-w-2xl rounded-[2rem] border border-line bg-white p-7 shadow-soft sm:p-10">
+    <div className="brand-mark"><HeartHandshake size={22} /></div>
+    <div className="eyebrow mt-7"><LockKeyhole size={13} /> PRIVATE INVITATION</div>
+    <h1 className="mt-3 font-display text-3xl font-medium tracking-tight text-forest">Join a care space?</h1>
+    <p className="mt-3 text-sm leading-6 text-muted">Before joining, choose what you're comfortable sharing. You can revoke consent later. Your journal and free-text check-in notes remain private.</p>
+    <div className="mt-7 space-y-3">
+      <label className="flex gap-3 rounded-2xl border border-line p-4"><input type="checkbox" checked={sharedSchedules} onChange={(e) => setSharedSchedules(e.target.checked)} className="mt-1 accent-[#4d7156]" /><span><span className="block text-sm font-semibold">Shared schedules <span className="text-terracotta">*</span></span><span className="mt-1 block text-xs leading-5 text-muted">Allow the two of you to propose and review shared routines. Personal schedules remain yours.</span></span></label>
+      <label className="flex gap-3 rounded-2xl border border-line p-4"><input type="checkbox" checked={messageHistory} onChange={(e) => setMessageHistory(e.target.checked)} className="mt-1 accent-[#4d7156]" /><span><span className="block text-sm font-semibold">Message history <span className="text-terracotta">*</span></span><span className="mt-1 block text-xs leading-5 text-muted">Messages are visible to the sender and intended recipient.</span></span></label>
+      <label className="flex gap-3 rounded-2xl border border-line p-4"><input type="checkbox" checked={dailySummary} onChange={(e) => setDailySummary(e.target.checked)} className="mt-1 accent-[#4d7156]" /><span><span className="block text-sm font-semibold">Share daily check-in summaries (optional)</span><span className="mt-1 block text-xs leading-5 text-muted">Share selected mood and energy fields. Free-text notes and journal entries are never included.</span></span></label>
+    </div>
+    <p className="mt-4 text-xs leading-5 text-muted">The invite expires after 7 days and can be used once. Joining does not enable browser notifications automatically.</p>
+    {props.error && <InlineNotice kind="error" text={props.error} onClose={() => undefined} />}
+    <button disabled={props.busy || !sharedSchedules || !messageHistory} className="button-primary mt-5 w-full justify-center" onClick={() => props.onAccept({ shared_schedules: sharedSchedules, message_history: messageHistory, daily_summary: dailySummary })}>{props.busy ? "Joining…" : "Accept and join"} <ArrowRight size={16} /></button>
+    <button disabled={props.busy} className="mt-3 w-full rounded-xl px-4 py-2 text-sm font-medium text-muted hover:bg-cream" onClick={props.onDecline}>Not now</button>
+  </section></div>;
+}
+
 function OnboardingScreen(props: { email: string; name: string; setName: (value: string) => void; onCreate: (event: FormEvent<HTMLFormElement>) => void; busy: boolean; error: string; onSignOut: () => void }) {
   return <div className="min-h-screen bg-cream px-4 py-10"><div className="mx-auto max-w-xl rounded-[2rem] border border-line bg-white p-7 shadow-soft sm:p-10"><div className="brand-mark"><HeartHandshake size={22} /></div><div className="eyebrow mt-7"><Leaf size={13} /> A PRIVATE SPACE FOR TWO</div><h1 className="mt-3 font-display text-3xl font-medium tracking-tight text-forest">Let's make room for care.</h1><p className="mt-3 text-sm leading-6 text-muted">Signed in as {props.email}. Create a private care space, or open the invitation link your friend shared with you.</p><form className="mt-7 space-y-4" onSubmit={props.onCreate}><label className="block"><span className="mb-2 block text-xs font-semibold text-forest">Care space name</span><input required maxLength={80} value={props.name} onChange={(event) => props.setName(event.target.value)} className="form-input" /></label><div className="rounded-xl bg-cream p-3 text-xs leading-5 text-muted"><Clock3 size={14} className="mr-1 inline" /> Your local timezone ({localTimezone()}) will be used for future schedules. Quiet hours default to 11 PM–7 AM.</div><button disabled={props.busy} className="button-primary w-full justify-center" type="submit">{props.busy ? "Creating…" : "Create my care space"} <ArrowRight size={16} /></button></form><button className="mt-4 w-full rounded-xl px-4 py-2 text-sm font-medium text-muted hover:bg-cream" onClick={props.onSignOut}>Sign out</button>{props.error && <InlineNotice kind="error" text={props.error} onClose={() => undefined} />}</div></div>;
 }
@@ -222,6 +258,7 @@ function FeaturePanel(props: { icon: ReactNode; title: string; description: stri
 }
 function SettingsPanel({ isPreview }: { isPreview: boolean }) {
   const settings = [
+    { icon: <Activity size={17} />, title: "Care activity", detail: "Changes to shared routines and permissions are auditable." },
     { icon: <LockKeyhole size={17} />, title: "Private by default", detail: "Your journal and free-text notes are not shared." },
     { icon: <Moon size={17} />, title: "Quiet hours", detail: "11:00 PM to 7:00 AM in your configured timezone." },
     { icon: <Clock3 size={17} />, title: "History retention", detail: "Eligible historical records are removed after 90 days." },
