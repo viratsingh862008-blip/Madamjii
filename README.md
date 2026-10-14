@@ -19,7 +19,7 @@ The dashboard explicitly labels illustrative content as preview data. Live sched
 
 ## Local setup
 
-1. Install Node.js 20 or newer.
+1. Install Node.js 22.12 or newer (the repository pins 22.20.0 in `.nvmrc`).
 2. Run `npm install`.
 3. Copy `.env.example` to `.env.local`.
 4. Add your Supabase project URL and publishable key (or legacy anon key).
