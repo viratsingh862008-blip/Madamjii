@@ -4,7 +4,7 @@ A private, two-person care companion for shared routines, caring reminders, and 
 
 ## Milestone 1
 
-This branch contains the responsive React dashboard shell, Supabase email/password signup and authentication, RLS-protected persistent profiles, private care-space creation, consent-based invitation acceptance, foundational PostgreSQL schema/RLS, and unit tests.
+This branch contains the responsive React dashboard shell, Supabase username/password signup and authentication (using internal Auth aliases; no email address is collected), RLS-protected persistent profiles, private care-space creation, consent-based invitation acceptance, foundational PostgreSQL schema/RLS, and unit tests.
 
 The dashboard explicitly labels illustrative content as preview data. Live schedule editing, check-in/journal persistence, browser push, message dispatch, n8n automation, retention scheduling, and production deployment are not implemented or verified yet.
 
@@ -24,7 +24,7 @@ The dashboard explicitly labels illustrative content as preview data. Live sched
 3. Copy `.env.example` to `.env.local`.
 4. Add your Supabase project URL and publishable key (or legacy anon key).
 5. The initial schema is applied to the configured development project. For reproducibility, the applied migration is `supabase/migrations/20261014191941_initial_schema.sql`; the follow-up hardening migration is `supabase/migrations/20261014192015_revoke_public_rls_auto_enable_execute.sql`.
-6. In Supabase Auth, disable **Confirm email** to allow direct email/password signup without an email verification step. Keep password strength and rate limits enabled.
+6. In Supabase Auth, disable **Confirm email** to allow username/password signup without email verification. The app maps usernames to internal Supabase Auth email aliases; users do not enter a real email address. This also means email-based password recovery is not available until a separate recovery method is implemented. Keep password strength and rate limits enabled.
 7. Run `npm run dev`.
 
 Without Supabase environment variables, the site runs in **preview mode** using local illustrative data. Preview actions do not persist and are not real reminders.
