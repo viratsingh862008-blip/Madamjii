@@ -242,6 +242,24 @@ $$;
 create trigger care_space_owner_membership after insert on public.care_spaces
 for each row execute function private.add_owner_membership();
 
+create or replace function private.guard_schedule_identity()
+returns trigger language plpgsql set search_path = ''
+as $
+begin
+  if new.care_space_id is distinct from old.care_space_id
+    or new.created_by is distinct from old.created_by
+    or new.scope is distinct from old.scope
+    or new.owner_user_id is distinct from old.owner_user_id then
+    raise exception 'Schedule ownership and scope are immutable; create a new proposal instead'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$;
+create trigger guard_schedule_identity_before_update
+before update on public.care_schedules
+for each row execute function private.guard_schedule_identity();
+
 create or replace function private.sync_checkin_summary()
 returns trigger language plpgsql security definer set search_path = ''
 as $$
@@ -273,6 +291,7 @@ revoke all on function private.is_active_member(uuid) from public, anon;
 revoke all on function private.current_member_role(uuid) from public, anon;
 revoke all on function private.add_owner_membership() from public, anon, authenticated;
 revoke all on function private.sync_checkin_summary() from public, anon, authenticated;
+revoke all on function private.guard_schedule_identity() from public, anon, authenticated;
 grant execute on function private.is_active_member(uuid) to authenticated;
 grant execute on function private.current_member_role(uuid) to authenticated;
 
@@ -282,7 +301,7 @@ as $$
 declare v_token text; v_friend_count integer;
 begin
   if auth.uid() is null then raise exception 'Authentication required' using errcode = '42501'; end if;
-  if private.current_member_role(p_care_space_id) <> 'admin' then
+  if private.current_member_role(p_care_space_id) is distinct from 'admin' then
     raise exception 'Only the care admin can invite a member' using errcode = '42501';
   end if;
   update public.care_invitations set revoked_at = now()
@@ -351,7 +370,7 @@ begin
   select * into v_schedule from public.care_schedules where id = p_schedule_id for update;
   if not found or v_schedule.scope <> 'shared' or v_schedule.status <> 'proposed'
     or v_schedule.version <> p_schedule_version
-    or private.current_member_role(v_schedule.care_space_id) <> 'friend'
+    or private.current_member_role(v_schedule.care_space_id) is distinct from 'friend'
     or v_schedule.created_by = auth.uid() then
     raise exception 'This proposal cannot be reviewed by this user' using errcode = '42501';
   end if;
@@ -391,7 +410,8 @@ alter table public.delivery_attempts enable row level security;
 alter table public.audit_events enable row level security;
 alter table public.retention_runs enable row level security;
 
-grant select, insert, update on public.care_spaces to authenticated;
+grant select, insert on public.care_spaces to authenticated;
+grant update (name, timezone) on public.care_spaces to authenticated;
 grant select on public.care_members to authenticated;
 grant select on public.consent_records to authenticated;
 grant select, insert, update, delete on public.care_schedules to authenticated;
@@ -434,14 +454,15 @@ create policy "members create allowed schedules" on public.care_schedules for in
     (scope = 'personal' and owner_user_id = auth.uid() and status = 'active') or
     (scope = 'shared' and owner_user_id is null and private.current_member_role(care_space_id) = 'admin' and status = 'proposed')
   ));
-create policy "owners update personal schedules and admins update shared schedules" on public.care_schedules for update to authenticated
+create policy "owners update personal schedules and admins update proposals" on public.care_schedules for update to authenticated
   using (private.is_active_member(care_space_id) and (
     (scope = 'personal' and owner_user_id = auth.uid()) or
-    (scope = 'shared' and created_by = auth.uid() and private.current_member_role(care_space_id) = 'admin')
+    (scope = 'shared' and created_by = auth.uid() and private.current_member_role(care_space_id) = 'admin' and status = 'proposed')
   ))
   with check (private.is_active_member(care_space_id) and (
     (scope = 'personal' and owner_user_id = auth.uid() and created_by = auth.uid()) or
-    (scope = 'shared' and created_by = auth.uid() and private.current_member_role(care_space_id) = 'admin' and owner_user_id is null)
+    (scope = 'shared' and created_by = auth.uid() and private.current_member_role(care_space_id) = 'admin'
+      and owner_user_id is null and status = 'proposed')
   ));
 create policy "owners delete personal schedules" on public.care_schedules for delete to authenticated
   using (scope = 'personal' and owner_user_id = auth.uid() and private.is_active_member(care_space_id));
@@ -457,12 +478,25 @@ create policy "members update visible task occurrences" on public.task_occurrenc
   with check (exists (select 1 from public.care_schedules s where s.id = schedule_id and private.is_active_member(s.care_space_id)
     and (s.owner_user_id = auth.uid() or (s.scope = 'shared' and s.status = 'active'))));
 
-create policy "members read messages they sent or received" on public.care_messages for select to authenticated
-  using (private.is_active_member(care_space_id) and (sender_user_id = auth.uid() or recipient_user_id = auth.uid()));
-create policy "members send messages as themselves" on public.care_messages for insert to authenticated
+create policy "members read messages with mutual history consent" on public.care_messages for select to authenticated
+  using (private.is_active_member(care_space_id)
+    and (sender_user_id = auth.uid() or recipient_user_id = auth.uid())
+    and exists (select 1 from public.consent_records cr where cr.care_space_id = care_messages.care_space_id
+      and cr.user_id = care_messages.sender_user_id and cr.consent_type = 'shared_care'
+      and cr.revoked_at is null and cr.scope ->> 'message_history' = 'true')
+    and exists (select 1 from public.consent_records cr where cr.care_space_id = care_messages.care_space_id
+      and cr.user_id = care_messages.recipient_user_id and cr.consent_type = 'shared_care'
+      and cr.revoked_at is null and cr.scope ->> 'message_history' = 'true'));
+create policy "members send messages with mutual history consent" on public.care_messages for insert to authenticated
   with check (sender_user_id = auth.uid() and private.is_active_member(care_space_id)
     and exists (select 1 from public.care_members cm where cm.care_space_id = care_messages.care_space_id
-      and cm.user_id = care_messages.recipient_user_id and cm.membership_status = 'active'));
+      and cm.user_id = care_messages.recipient_user_id and cm.membership_status = 'active')
+    and exists (select 1 from public.consent_records cr where cr.care_space_id = care_messages.care_space_id
+      and cr.user_id = care_messages.sender_user_id and cr.consent_type = 'shared_care'
+      and cr.revoked_at is null and cr.scope ->> 'message_history' = 'true')
+    and exists (select 1 from public.consent_records cr where cr.care_space_id = care_messages.care_space_id
+      and cr.user_id = care_messages.recipient_user_id and cr.consent_type = 'shared_care'
+      and cr.revoked_at is null and cr.scope ->> 'message_history' = 'true'));
 create policy "senders update their own unsent messages" on public.care_messages for update to authenticated
   using (sender_user_id = auth.uid() and status in ('draft', 'scheduled') and private.is_active_member(care_space_id))
   with check (sender_user_id = auth.uid() and status in ('draft', 'scheduled', 'cancelled') and private.is_active_member(care_space_id));
