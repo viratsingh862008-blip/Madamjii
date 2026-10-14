@@ -1,0 +1,10 @@
+{
+  "name": "Are You OK? — Care companion",
+  "short_name": "Are You OK?",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f7f1",
+  "theme_color": "#f7f7f1",
+  "description": "A little care, throughout the day.",
+  "icons": []
+}
