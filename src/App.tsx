@@ -10,6 +10,10 @@ import {
   signInWithPassword, signUpWithPassword, signOut, supabase, supabaseConfigured, type AuthSession, type CareMembership,
 } from "./lib/supabase";
 import type { CareRole } from "./lib/care";
+import {
+  createTestNotification, enableBrowserPush, listNotifications, markNotificationRead,
+  showLocalNotification, type AppNotification,
+} from "./lib/notifications";
 
 type View = "today" | "schedule" | "messages" | "checkin" | "journal" | "reports" | "settings";
 const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
@@ -61,6 +65,10 @@ export default function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(() => new URLSearchParams(window.location.search).get("invite"));
+  const [notificationItems, setNotificationItems] = useState<AppNotification[]>([]);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationBusy, setNotificationBusy] = useState(false);
+  const [pushStatus, setPushStatus] = useState("Not enabled");
 
   useEffect(() => {
     if (!supabase) { setAuthLoading(false); return; }
@@ -117,6 +125,68 @@ export default function App() {
 
   const membership = memberships[0];
   const isPreview = !supabaseConfigured;
+
+  async function refreshNotifications(showNewPush = false) {
+    if (!session || !supabase) return;
+    try {
+      const next = await listNotifications();
+      setNotificationItems((previous) => {
+        if (showNewPush && previous.length > 0 && next.length > 0) {
+          const known = new Set(previous.map((item) => item.id));
+          const newest = next.filter((item) => !known.has(item.id)).slice(0, 3);
+          newest.forEach((item) => { void showLocalNotification(item).catch(() => undefined); });
+        }
+        return next;
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Couldn't load notifications.");
+    }
+  }
+
+  useEffect(() => {
+    if (!session || !supabase) { setNotificationItems([]); return; }
+    void refreshNotifications(false);
+    const interval = window.setInterval(() => { void refreshNotifications(true); }, 45000);
+    return () => window.clearInterval(interval);
+  }, [session?.user.id]);
+
+  async function handleCreateTestNotification() {
+    setNotificationBusy(true); setError("");
+    try {
+      await createTestNotification();
+      await refreshNotifications(false);
+      setNotice("Test notification saved to your notification centre.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Couldn't create a test notification.");
+    } finally { setNotificationBusy(false); }
+  }
+
+  async function handleMarkNotificationRead(item: AppNotification) {
+    if (item.read_at) return;
+    try {
+      await markNotificationRead(item.id);
+      setNotificationItems((items) => items.map((current) => current.id === item.id ? { ...current, read_at: new Date().toISOString() } : current));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Couldn't update this notification.");
+    }
+  }
+
+  async function handleEnablePush() {
+    setNotificationBusy(true); setError("");
+    try {
+      const result = await enableBrowserPush();
+      const messages: Record<string, string> = {
+        enabled: "Browser push is subscribed on this device. Background delivery still needs the server-side VAPID sender to be configured.",
+        unsupported: "This browser does not support Web Push. In-app notifications remain available.",
+        "missing-key": "Push setup needs VITE_VAPID_PUBLIC_KEY in the Vercel environment. Do not put the private VAPID key in the frontend.",
+        denied: "Notification permission was not granted. You can still see updates in the in-app notification centre.",
+      };
+      setPushStatus(messages[result]);
+      if (result === "enabled") setNotice(messages[result]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Couldn't enable browser push.");
+    } finally { setNotificationBusy(false); }
+  }
   const role: CareRole = isPreview ? previewRole : (membership?.role ?? "friend");
   const copy = viewCopy[view];
 
@@ -187,8 +257,15 @@ export default function App() {
       <main className="min-h-screen lg:pl-[268px]">
         <header className="sticky top-0 z-20 flex h-[76px] items-center justify-between border-b border-line/80 bg-cream/90 px-4 backdrop-blur-xl sm:px-7 lg:px-10">
           <div className="flex items-center gap-3"><button className="rounded-xl border border-line bg-white p-2 lg:hidden" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}><Menu size={19} /></button><div><div className="text-xs text-muted">{new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date())}</div><div className="mt-1 text-sm font-semibold">{isPreview ? "A space to feel supported" : (membership?.care_spaces?.name ?? "Your care space")}</div></div></div>
-          <div className="flex items-center gap-2 sm:gap-3">{isPreview ? <span className="preview-pill"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Preview mode</span> : <span className="connected-pill"><ShieldCheck size={13} /> Connected</span>}{supabaseConfigured && <button onClick={handleSignOut} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2.5 text-sm font-medium text-forest transition hover:bg-sage-light disabled:opacity-50" aria-label="Sign out"><LogOut size={16} /><span className="hidden sm:inline">{busy ? "Signing out…" : "Sign out"}</span></button>}<button className="relative rounded-xl border border-line bg-white p-2.5 text-forest transition hover:bg-sage-light" aria-label="Notification settings" onClick={() => setView("settings")}><Bell size={18} /></button><div className="hidden h-9 w-9 items-center justify-center rounded-full bg-sage-light text-sm font-semibold text-forest sm:flex">{isPreview ? (role === "admin" ? "A" : "♡") : initials(String(session?.user.user_metadata?.full_name ?? "F"))}</div></div>
+          <div className="flex items-center gap-2 sm:gap-3">{isPreview ? <span className="preview-pill"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Preview mode</span> : <span className="connected-pill"><ShieldCheck size={13} /> Connected</span>}{supabaseConfigured && <button onClick={handleSignOut} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2.5 text-sm font-medium text-forest transition hover:bg-sage-light disabled:opacity-50" aria-label="Sign out"><LogOut size={16} /><span className="hidden sm:inline">{busy ? "Signing out…" : "Sign out"}</span></button>}<button className="relative rounded-xl border border-line bg-white p-2.5 text-forest transition hover:bg-sage-light" aria-label="Open notifications" aria-expanded={notificationOpen} onClick={() => { setNotificationOpen((open) => !open); if (!notificationOpen) void refreshNotifications(false); }}><Bell size={18} />{notificationItems.some((item) => !item.read_at) && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-terracotta ring-2 ring-cream" />}</button><div className="hidden h-9 w-9 items-center justify-center rounded-full bg-sage-light text-sm font-semibold text-forest sm:flex">{isPreview ? (role === "admin" ? "A" : "♡") : initials(String(session?.user.user_metadata?.full_name ?? "F"))}</div></div>
         </header>
+        {notificationOpen && <section className="sticky top-[76px] z-20 mx-4 mt-3 max-w-xl rounded-2xl border border-line bg-white p-4 shadow-soft sm:mx-auto sm:mr-7 lg:mr-10">
+          <div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">Notifications</h2><p className="mt-1 text-xs text-muted">Private to your account · retained for up to 90 days</p></div><button className="rounded-lg p-1.5 text-muted hover:bg-cream" aria-label="Close notifications" onClick={() => setNotificationOpen(false)}><X size={16} /></button></div>
+          <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
+            {notificationItems.length === 0 ? <p className="rounded-xl bg-cream p-4 text-xs leading-5 text-muted">No notifications yet. Use the test button below to verify the in-app notification centre.</p> : notificationItems.map((item) => <button key={item.id} onClick={() => void handleMarkNotificationRead(item)} className={"block w-full rounded-xl border p-3 text-left transition hover:bg-cream " + (item.read_at ? "border-line bg-white" : "border-sage/40 bg-sage-light/40")}><span className="flex items-start justify-between gap-2"><span className="text-sm font-semibold">{item.title}</span>{!item.read_at && <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-sage-dark" />}</span><span className="mt-1 block text-xs leading-5 text-muted">{item.body}</span><span className="mt-2 block text-[10px] text-muted">{new Date(item.created_at).toLocaleString()}</span></button>)}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2"><button disabled={notificationBusy} className="button-secondary flex-1 justify-center" onClick={() => void handleCreateTestNotification()}>{notificationBusy ? "Working…" : "Create test notification"}</button><button className="button-quiet" onClick={() => { setNotificationOpen(false); setView("settings"); }}>Push settings</button></div>
+        </section>}
         <div className="mx-auto max-w-[1440px] px-4 py-7 sm:px-7 sm:py-9 lg:px-10 lg:py-10">
           {notice && <InlineNotice kind="success" text={notice} onClose={() => setNotice("")} />}
           {error && <InlineNotice kind="error" text={error} onClose={() => setError("")} />}
@@ -202,7 +279,7 @@ export default function App() {
           {view === "checkin" && <FeaturePanel icon={<Heart size={21} />} title="A gentle daily check-in" description="Mood and energy summaries can be shared by choice. Free-text check-in notes remain private." isPreview={isPreview} />}
           {view === "journal" && <FeaturePanel icon={<BookHeart size={21} />} title="Your private journal" description="Journal entries are private to their author by default and never appear in shared reports." isPreview={isPreview} />}
           {view === "reports" && <FeaturePanel icon={<BarChart3 size={21} />} title="Progress without pressure" description="Reports will include only the fields your friend has agreed to share. Private notes are excluded." isPreview={isPreview} />}
-          {view === "settings" && <SettingsPanel isPreview={isPreview} />}
+          {view === "settings" && <SettingsPanel isPreview={isPreview} pushStatus={pushStatus} onEnablePush={handleEnablePush} pushBusy={notificationBusy} />}
         </div>
       </main>
     </div>
@@ -305,15 +382,15 @@ function TodayView(props: { isPreview: boolean; role: CareRole; completed: strin
 function FeaturePanel(props: { icon: ReactNode; title: string; description: string; isPreview: boolean }) {
   return <section className="mx-auto max-w-3xl rounded-[1.75rem] border border-line bg-white p-7 sm:p-10"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sage-light text-sage-dark">{props.icon}</div><h2 className="mt-5 font-display text-2xl font-semibold tracking-tight">{props.title}</h2><p className="mt-3 max-w-xl text-sm leading-6 text-muted">{props.description}</p><div className="mt-7 rounded-2xl border border-dashed border-line bg-cream p-5"><div className="flex items-center gap-2 text-sm font-semibold"><Clock3 size={16} /> {props.isPreview ? "Preview only" : "Next implementation milestone"}</div><p className="mt-2 text-xs leading-5 text-muted">{props.isPreview ? "This section is a design preview. Actions will not persist or send notifications." : "This feature is not connected to live care data yet. No real reminder or message is being sent from this screen."}</p></div></section>;
 }
-function SettingsPanel({ isPreview }: { isPreview: boolean }) {
+function SettingsPanel({ isPreview, pushStatus, onEnablePush, pushBusy }: { isPreview: boolean; pushStatus: string; onEnablePush: () => void; pushBusy: boolean }) {
   const settings = [
     { icon: <Activity size={17} />, title: "Care activity", detail: "Changes to shared routines and permissions are auditable." },
     { icon: <LockKeyhole size={17} />, title: "Private by default", detail: "Your journal and free-text notes are not shared." },
     { icon: <Moon size={17} />, title: "Quiet hours", detail: "11:00 PM to 7:00 AM in your configured timezone." },
     { icon: <Clock3 size={17} />, title: "History retention", detail: "Eligible historical records are removed after 90 days." },
-    { icon: <Bell size={17} />, title: "Browser notifications", detail: "Push delivery will be connected in a later milestone." },
+    { icon: <Bell size={17} />, title: "Browser notifications", detail: "In-app notification centre is connected. Push needs browser permission and a public VAPID key; background delivery also needs a server-side sender." },
   ];
-  return <section className="mx-auto max-w-3xl rounded-[1.75rem] border border-line bg-white p-6 sm:p-9"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sage-light text-sage-dark"><ShieldCheck size={22} /></div><h2 className="mt-5 font-display text-2xl font-semibold">Your care, your choices.</h2><p className="mt-2 text-sm leading-6 text-muted">The finalized product uses consent-based sharing, private journal entries and a 90-day default history retention policy.</p><div className="mt-6 space-y-3">{settings.map((item) => <div key={item.title} className="flex items-start gap-3 rounded-2xl bg-cream p-4"><div className="mt-0.5 text-sage-dark">{item.icon}</div><div><div className="text-sm font-semibold">{item.title}</div><p className="mt-1 text-xs leading-5 text-muted">{item.detail}</p></div></div>)}</div>{isPreview && <div className="mt-5 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">Preview mode: preferences shown here are design defaults and are not saved.</div>}</section>;
+  return <section className="mx-auto max-w-3xl rounded-[1.75rem] border border-line bg-white p-6 sm:p-9"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sage-light text-sage-dark"><ShieldCheck size={22} /></div><h2 className="mt-5 font-display text-2xl font-semibold">Your care, your choices.</h2><p className="mt-2 text-sm leading-6 text-muted">The finalized product uses consent-based sharing, private journal entries and a 90-day default history retention policy.</p><div className="mt-6 space-y-3">{settings.map((item) => <div key={item.title} className="flex items-start gap-3 rounded-2xl bg-cream p-4"><div className="mt-0.5 text-sage-dark">{item.icon}</div><div><div className="text-sm font-semibold">{item.title}</div><p className="mt-1 text-xs leading-5 text-muted">{item.detail}</p></div></div>)}</div><div className="mt-5 rounded-2xl border border-line bg-white p-4"><div className="flex items-center gap-2 text-sm font-semibold"><Bell size={16} /> Browser push</div><p className="mt-2 text-xs leading-5 text-muted">{pushStatus}. The in-app notification centre works independently as a fallback.</p><button disabled={isPreview || pushBusy} onClick={onEnablePush} className="button-secondary mt-3 w-full justify-center">{pushBusy ? "Setting up…" : "Enable notifications on this device"}</button></div>{isPreview && <div className="mt-5 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">Preview mode: preferences shown here are design defaults and are not saved.</div>}</section>;
 }
 function InlineNotice(props: { kind: "success" | "error"; text: string; onClose: () => void }) {
   return <div role={props.kind === "error" ? "alert" : "status"} className={"mb-4 flex items-start gap-2 rounded-xl border p-3 text-sm " + (props.kind === "error" ? "border-red-200 bg-red-50 text-red-800" : "border-sage/30 bg-sage-light/70 text-forest")}><div className="mt-0.5">{props.kind === "error" ? <CircleHelp size={16} /> : <CheckCircle2 size={16} />}</div><p className="min-w-0 flex-1 leading-5">{props.text}</p><button aria-label="Dismiss message" onClick={props.onClose} className="rounded-md p-0.5 opacity-70 hover:opacity-100"><X size={14} /></button></div>;
