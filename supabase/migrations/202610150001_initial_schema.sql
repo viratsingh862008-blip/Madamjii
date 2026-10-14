@@ -249,7 +249,7 @@ begin
   values (new.id, new.created_by, 'admin', 'active');
   insert into public.consent_records(care_space_id, user_id, consent_type, scope, version)
   values (new.id, new.created_by, 'shared_care',
-    '{"shared_schedules":true,"daily_summary":false,"message_history":true}'::jsonb, 1);
+    '{"shared_schedules":false,"daily_summary":false,"message_history":false}'::jsonb, 1);
   insert into public.member_preferences(care_space_id, user_id, timezone)
   values (new.id, new.created_by, new.timezone);
   return new;
@@ -347,6 +347,41 @@ revoke all on function private.guard_checkin_identity() from public, anon, authe
 grant execute on function private.is_active_member(uuid) to authenticated;
 grant execute on function private.current_member_role(uuid) to authenticated;
 
+create or replace function public.create_care_space_with_consent(
+  p_name text,
+  p_timezone text,
+  p_consent_scope jsonb
+)
+returns uuid language plpgsql security definer set search_path = ''
+as $
+declare v_space_id uuid; v_scope jsonb;
+begin
+  if auth.uid() is null then raise exception 'Authentication required' using errcode = '42501'; end if;
+  if p_name is null or char_length(btrim(p_name)) < 1 or char_length(btrim(p_name)) > 80 then
+    raise exception 'Care space name must be between 1 and 80 characters' using errcode = '22023';
+  end if;
+  if p_timezone is null or not exists (
+    select 1 from pg_catalog.pg_timezone_names where name = p_timezone
+  ) then raise exception 'Invalid timezone' using errcode = '22023'; end if;
+  v_scope := jsonb_build_object(
+    'shared_schedules', coalesce((p_consent_scope ->> 'shared_schedules')::boolean, false),
+    'daily_summary', coalesce((p_consent_scope ->> 'daily_summary')::boolean, false),
+    'message_history', coalesce((p_consent_scope ->> 'message_history')::boolean, false)
+  );
+  if v_scope ->> 'shared_schedules' <> 'true' or v_scope ->> 'message_history' <> 'true' then
+    raise exception 'Consent to shared schedules and message history is required' using errcode = '22023';
+  end if;
+  insert into public.care_spaces(name, timezone, created_by)
+    values (btrim(p_name), p_timezone, auth.uid()) returning id into v_space_id;
+  update public.consent_records set scope = v_scope, granted_at = now()
+    where care_space_id = v_space_id and user_id = auth.uid()
+      and consent_type = 'shared_care' and revoked_at is null;
+  insert into public.audit_events(care_space_id, actor_user_id, entity_type, entity_id, action, metadata)
+    values (v_space_id, auth.uid(), 'care_space', v_space_id, 'created', '{"consent_recorded":true}'::jsonb);
+  return v_space_id;
+end;
+$;
+
 create or replace function public.create_care_invitation(p_care_space_id uuid)
 returns text language plpgsql security definer set search_path = ''
 as $$
@@ -355,6 +390,15 @@ begin
   if auth.uid() is null then raise exception 'Authentication required' using errcode = '42501'; end if;
   if private.current_member_role(p_care_space_id) is distinct from 'admin' then
     raise exception 'Only the care admin can invite a member' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.consent_records cr
+    where cr.care_space_id = p_care_space_id and cr.user_id = auth.uid()
+      and cr.consent_type = 'shared_care' and cr.revoked_at is null
+      and cr.scope ->> 'shared_schedules' = 'true'
+      and cr.scope ->> 'message_history' = 'true'
+  ) then
+    raise exception 'Record your care-sharing consent before inviting a friend' using errcode = '42501';
   end if;
   update public.care_invitations set revoked_at = now()
     where care_space_id = p_care_space_id and accepted_at is null and revoked_at is null;
@@ -447,6 +491,8 @@ begin
 end;
 $$;
 
+revoke all on function public.create_care_space_with_consent(text, text, jsonb) from public, anon;
+grant execute on function public.create_care_space_with_consent(text, text, jsonb) to authenticated;
 revoke all on function public.create_care_invitation(uuid) from public, anon;
 revoke all on function public.accept_care_invitation(text, jsonb, text) from public, anon;
 revoke all on function public.review_shared_schedule(uuid, integer, text, text) from public, anon;
@@ -473,7 +519,7 @@ alter table public.delivery_attempts enable row level security;
 alter table public.audit_events enable row level security;
 alter table public.retention_runs enable row level security;
 
-grant select, insert on public.care_spaces to authenticated;
+grant select on public.care_spaces to authenticated;
 grant update (name) on public.care_spaces to authenticated;
 grant select, update (timezone, quiet_hours_start, quiet_hours_end, push_enabled)
   on public.member_preferences to authenticated;
@@ -498,8 +544,6 @@ grant select on public.shared_check_in_summaries to authenticated;
 
 create policy "care spaces readable by active members" on public.care_spaces for select to authenticated
   using (private.is_active_member(id));
-create policy "users create their own care space" on public.care_spaces for insert to authenticated
-  with check (created_by = auth.uid());
 create policy "admins update care space settings" on public.care_spaces for update to authenticated
   using (private.current_member_role(id) = 'admin')
   with check (private.current_member_role(id) = 'admin');
