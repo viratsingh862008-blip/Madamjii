@@ -24,7 +24,7 @@ export interface CareMembership {
 
 const USERNAME_ALIAS_DOMAIN = "accounts.areyouok.app";
 
-function usernameToAuthEmail(username: string): string {
+export function usernameToAuthEmail(username: string): string {
   const normalized = username.trim().toLowerCase();
   if (!/^[a-z0-9._-]{3,24}$/.test(normalized)) {
     throw new Error("Username must be 3–24 characters using letters, numbers, dots, underscores or hyphens.");
