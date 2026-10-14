@@ -47,7 +47,7 @@ export async function signUpWithPassword(username: string, password: string): Pr
   const { data, error } = await supabase.auth.signUp({
     email: usernameToAuthEmail(normalized),
     password,
-    options: { data: { full_name: normalized } },
+    options: { data: { full_name: normalized, username: normalized } },
   });
   if (error) {
     if (/already registered|already exists/i.test(error.message)) throw new Error("That username is already taken. Choose another one.");
