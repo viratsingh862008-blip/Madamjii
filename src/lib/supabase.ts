@@ -22,13 +22,23 @@ export interface CareMembership {
   care_spaces: { id: string; name: string; timezone: string } | null;
 }
 
-export async function sendMagicLink(email: string): Promise<void> {
+export async function signInWithPassword(email: string, password: string): Promise<void> {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { error } = await supabase.auth.signInWithOtp({
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+}
+
+export async function signUpWithPassword(name: string, email: string, password: string): Promise<void> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase.auth.signUp({
     email,
-    options: { emailRedirectTo: window.location.origin + window.location.pathname + window.location.search },
+    password,
+    options: { data: { full_name: name.trim() } },
   });
   if (error) throw error;
+  if (!data.session) {
+    throw new Error("Email confirmation is still enabled in Supabase. Disable Confirm email in Authentication settings, then try again.");
+  }
 }
 
 export async function getMemberships(): Promise<CareMembership[]> {
