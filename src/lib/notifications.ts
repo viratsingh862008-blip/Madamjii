@@ -60,9 +60,13 @@ function decodeBase64Url(value: string): Uint8Array {
 export async function enableBrowserPush(): Promise<"enabled" | "unsupported" | "missing-key" | "denied"> {
   if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return "unsupported";
   const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY?.trim();
-  if (!vapidKey) return "missing-key";
   const permission = await Notification.requestPermission();
   if (permission !== "granted") return "denied";
+  // Local notifications remain available without push keys while the app is open.
+  if (!vapidKey) {
+    await navigator.serviceWorker.register("/sw.js");
+    return "missing-key";
+  }
   const client = requireClient();
   const { data: auth, error: authError } = await client.auth.getUser();
   if (authError) throw authError;
