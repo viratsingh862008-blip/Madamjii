@@ -4,7 +4,7 @@ A private, two-person care companion for shared routines, caring reminders, and 
 
 ## Milestone 1
 
-This branch contains the responsive React dashboard shell, Supabase email/password signup and authentication, private care-space creation, consent-based invitation acceptance, foundational PostgreSQL schema/RLS, and unit tests.
+This branch contains the responsive React dashboard shell, Supabase email/password signup and authentication, RLS-protected persistent profiles, private care-space creation, consent-based invitation acceptance, foundational PostgreSQL schema/RLS, and unit tests.
 
 The dashboard explicitly labels illustrative content as preview data. Live schedule editing, check-in/journal persistence, browser push, message dispatch, n8n automation, retention scheduling, and production deployment are not implemented or verified yet.
 
@@ -41,6 +41,6 @@ GitHub Actions runs these checks on the feature branch. The workflow result must
 
 - Never put Supabase service-role keys or Web Push private keys in frontend environment variables.
 - Only a Supabase publishable key (or legacy anon key) belongs in the browser.
-- The migration uses RLS, restricted RPC execution grants, hashed single-use invitation tokens, explicit invitation consent, and a private helper schema.
+- The migrations use RLS, a database-owned profile creation trigger linked to each Auth UUID, own-profile-only read/update policies, restricted RPC execution grants, hashed single-use invitation tokens, explicit invitation consent, and a private helper schema.
 - The schema has been applied to the configured Supabase project and verified to contain 18 public tables with RLS enabled. Automated advisors still flag intentional `SECURITY DEFINER` RPCs callable by authenticated users and five server-only tables with no client policies; do not store personal or health-related data until end-to-end authorization tests and consent/revocation flows are completed.
 - See `docs/PRD.md` for finalized product decisions and current scope.
