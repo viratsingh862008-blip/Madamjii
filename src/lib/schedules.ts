@@ -23,7 +23,7 @@ export async function listCareSchedules(careSpaceId: string): Promise<CareSchedu
 }
 export async function createCareSchedule(input: {
   careSpaceId: string; scope: ScheduleScope; type: ScheduleType; title: string;
-  instructions: string; scheduledFor: string; timezone: string;
+  instructions: string; scheduledFor: string; timezone: string; recurrence: "once" | "daily" | "weekly";
 }): Promise<string> {
   const db = client();
   const { data: auth, error: authError } = await db.auth.getUser();
@@ -35,7 +35,7 @@ export async function createCareSchedule(input: {
     p_care_space_id: input.careSpaceId, p_scope: input.scope, p_type: input.type,
     p_title: input.title.trim(), p_instructions: input.instructions.trim(),
     p_scheduled_for: scheduled.toISOString(), p_timezone: input.timezone,
-    p_recurrence_rule: { frequency: "once" },
+    p_recurrence_rule: { frequency: input.recurrence },
   });
   if (error) throw error;
   if (typeof data !== "string") throw new Error("Schedule creation did not return an ID.");
@@ -59,3 +59,6 @@ export async function listScheduleOccurrences(scheduleIds: string[]): Promise<Sc
   if (error) throw error;
   return (data ?? []) as ScheduleOccurrence[];
 }
+
+export async function completeOccurrence(id: string): Promise<void> { const {error}=await client().rpc("complete_task_occurrence",{p_occurrence_id:id}); if(error)throw error; }
+export async function snoozeOccurrence(id: string): Promise<string> { const {data,error}=await client().rpc("snooze_task_occurrence",{p_occurrence_id:id}); if(error)throw error; return String(data); }
