@@ -6,7 +6,7 @@ A private, two-person care companion for shared routines, caring reminders, and 
 
 This branch contains the responsive React dashboard shell, Supabase username/password signup and authentication (using internal Auth aliases; no email address is collected), RLS-protected persistent profiles, private care-space creation, consent-based invitation acceptance, foundational PostgreSQL schema/RLS, and unit tests.
 
-The dashboard explicitly labels illustrative content as preview data. Live schedule editing, check-in/journal persistence, browser push, message dispatch, n8n automation, retention scheduling, and production deployment are not implemented or verified yet.
+The dashboard labels preview data explicitly. Persistent one-time schedules, personal schedule controls, shared schedule proposals and friend approval are now wired to Supabase. Background reminder delivery, recurring schedule generation, persistent check-ins/journal/messages, automated retention and production end-to-end verification remain incomplete.
 
 ## Stack
 
@@ -53,7 +53,7 @@ GitHub Actions runs these checks on the feature branch. The workflow result must
 - The schema has been applied to the configured Supabase project and verified to contain 18 public tables with RLS enabled. Automated advisors still flag intentional `SECURITY DEFINER` RPCs callable by authenticated users and five server-only tables with no client policies; do not store personal or health-related data until end-to-end authorization tests and consent/revocation flows are completed.
 - See `docs/PRD.md` for finalized product decisions and current scope.
 
-## Free notifications (implementation status)
+## Schedule and admin workflow (implementation status)\n\n- The Admin controls workspace is visible to care-space admins and links to invitations, schedule management, notification setup and upcoming feature areas.\n- Schedule creation supports personal one-time routines across meal, hydration, medicine, rest, task and check-in categories. Instructions are optional; medicine instructions must follow the prescriber's directions.\n- Admins can propose shared one-time schedules. Shared plans remain `proposed` until the friend approves or declines them. Approval records an audit event.\n- Personal schedule rows can be paused, resumed and archived. Schedule writes are validated in a server-side PostgreSQL RPC and use the authenticated active membership.\n- Creating a personal schedule creates a task occurrence and idempotent queued reminder job. Approving a shared schedule queues its first reminder. **Queued does not mean delivered**: the background notification worker is not yet deployed. Recurrence, snooze, quiet-hour deferral and 30-minute follow-up are not active yet.\n\n## Free notifications (implementation status)
 
 - Persistent in-app notification centre uses `public.app_notifications`; row-level security restricts records to their owner and records expire after 90 days.
 - Browser service worker is in `public/sw.js`; it handles incoming Web Push payloads and notification clicks.
@@ -61,4 +61,4 @@ GitHub Actions runs these checks on the feature branch. The workflow result must
 - In-app polling runs while a signed-in app tab is open and can surface newly created notifications through the browser Notification API when permission is granted.
 - Set `VITE_VAPID_PUBLIC_KEY` in Vercel to allow Web Push subscription. The corresponding private VAPID key must only be configured as a server-side secret. Background push sending and scheduled reminder dispatch are not active until a server-side sender and scheduled worker are configured and tested.
 - No paid SMS/WhatsApp provider or n8n instance is required for this initial architecture. Free platform quotas and delivery limitations still apply.
-- Apply migration `supabase/migrations/20261015150000_free_notifications_foundation.sql` before testing. The dev Supabase project has this migration applied; production must be migrated separately before release.
+- Apply migrations `supabase/migrations/20261015150000_free_notifications_foundation.sql`, `supabase/migrations/20261015160000_persistent_schedule_creation_and_review.sql`, and `supabase/migrations/20261015161500_shared_schedule_approval_queues_reminder.sql` before testing. These migrations have been applied to the configured dev Supabase project; production must be migrated separately before release.
