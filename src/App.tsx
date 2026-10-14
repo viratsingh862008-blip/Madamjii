@@ -51,7 +51,7 @@ export default function App() {
   const [view, setView] = useState<View>("today");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [completed, setCompleted] = useState<string[]>([]);
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signup");
@@ -123,8 +123,8 @@ export default function App() {
   async function handlePasswordAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(""); setNotice("");
     try {
-      if (authMode === "signup") await signUpWithPassword(fullName, email.trim(), password);
-      else await signInWithPassword(email.trim(), password);
+      if (authMode === "signup") await signUpWithPassword(fullName.trim(), password);
+      else await signInWithPassword(username.trim(), password);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Couldn't authenticate your account.");
     } finally { setBusy(false); }
@@ -159,7 +159,7 @@ export default function App() {
 
   if (authLoading) return <LoadingScreen label="Opening your care space…" />;
   if (supabaseConfigured && !session) {
-    return <AuthScreen email={email} setEmail={setEmail} password={password} setPassword={setPassword} fullName={fullName} setFullName={setFullName} mode={authMode} setMode={setAuthMode} onSubmit={handlePasswordAuth} busy={busy} error={error} />;
+    return <AuthScreen username={username} setUsername={setUsername} password={password} setPassword={setPassword} fullName={fullName} setFullName={setFullName} mode={authMode} setMode={setAuthMode} onSubmit={handlePasswordAuth} busy={busy} error={error} />;
   }
   if (supabaseConfigured && session && pendingInviteToken) {
     return <InvitationConsentScreen busy={busy} error={error} onAccept={handleAcceptInvite} onDecline={declineInvite} />;
@@ -213,8 +213,8 @@ function LoadingScreen({ label }: { label: string }) {
   return <div className="min-h-screen grid place-items-center bg-cream text-forest"><div className="flex items-center gap-3"><span className="loading-dot" /><span className="text-sm font-medium">{label}</span></div></div>;
 }
 function AuthScreen(props: {
-  email: string;
-  setEmail: (value: string) => void;
+  username: string;
+  setUsername: (value: string) => void;
   password: string;
   setPassword: (value: string) => void;
   fullName: string;
@@ -228,15 +228,14 @@ function AuthScreen(props: {
   const signingUp = props.mode === "signup";
   return <div className="min-h-screen bg-cream p-4 sm:p-8"><div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl overflow-hidden rounded-[2rem] border border-line bg-white shadow-soft lg:grid-cols-[1.02fr_.98fr]">
     <div className="relative flex flex-col justify-between overflow-hidden bg-forest p-7 text-white sm:p-10 lg:p-12"><div className="absolute -right-24 -top-24 h-80 w-80 rounded-full border border-white/10" /><div className="relative flex items-center gap-3"><div className="brand-mark brand-mark-dark"><HeartHandshake size={22} /></div><div className="font-display text-xl font-semibold">Are You OK?<span className="text-[#b4c9a9]"></span></div></div><div className="relative my-12 max-w-md"><div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-white/80"><Heart size={13} /> A little care, throughout the day</div><h1 className="font-display text-4xl font-medium leading-tight tracking-[-.04em] sm:text-5xl">Care that feels like someone is there.</h1><p className="mt-5 max-w-sm text-sm leading-7 text-white/65">A private space for routines, thoughtful reminders and small check-ins — always with consent, never with pressure.</p></div><div className="relative flex items-center gap-3 text-xs text-white/60"><ShieldCheck size={15} /> Private by design. Shared by choice.</div></div>
-    <div className="flex flex-col justify-center p-7 sm:p-10 lg:p-14"><div className="mb-8"><div className="eyebrow"><LockKeyhole size={13} /> YOUR PRIVATE SPACE</div><h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-forest">{signingUp ? "Create your account." : "Welcome back."}</h2><p className="mt-2 text-sm leading-6 text-muted">{signingUp ? "Create a profile to get started. Your account receives its own secure ID automatically." : "Sign in with the email and password you registered with."}</p></div>
+    <div className="flex flex-col justify-center p-7 sm:p-10 lg:p-14"><div className="mb-8"><div className="eyebrow"><LockKeyhole size={13} /> YOUR PRIVATE SPACE</div><h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-forest">{signingUp ? "Create your account." : "Welcome back."}</h2><p className="mt-2 text-sm leading-6 text-muted">{signingUp ? "Create a profile to get started. Your account receives its own secure ID automatically." : "Sign in with your username and password."}</p></div>
       <form onSubmit={props.onSubmit} className="space-y-4">
-        {signingUp && <label className="block"><span className="mb-2 block text-xs font-semibold text-forest">Your name</span><input type="text" autoComplete="name" required minLength={2} maxLength={80} value={props.fullName} onChange={(event) => props.setFullName(event.target.value)} placeholder="Your name" className="form-input" /></label>}
-        <label className="block"><span className="mb-2 block text-xs font-semibold text-forest">Email address</span><input type="email" autoComplete="email" required maxLength={254} value={props.email} onChange={(event) => props.setEmail(event.target.value)} placeholder="you@example.com" className="form-input" /></label>
+        {<label className="block"><span className="mb-2 block text-xs font-semibold text-forest">{signingUp ? "Choose a username" : "Username"}</span><input type="text" autoComplete="username" required minLength={3} maxLength={24} pattern="[A-Za-z0-9._-]+" title="Use 3–24 letters, numbers, dots, underscores or hyphens." value={props.username || props.fullName} onChange={(event) => { props.setUsername(event.target.value); if (signingUp) props.setFullName(event.target.value); }} placeholder="e.g. aryan_08" className="form-input" /></label>}
         <label className="block"><span className="mb-2 block text-xs font-semibold text-forest">Password</span><input type="password" autoComplete={signingUp ? "new-password" : "current-password"} required minLength={8} maxLength={128} value={props.password} onChange={(event) => props.setPassword(event.target.value)} placeholder={signingUp ? "At least 8 characters" : "Your password"} className="form-input" /></label>
         <button disabled={props.busy} className="button-primary w-full justify-center" type="submit">{props.busy ? "Please wait…" : signingUp ? "Create account" : "Sign in"} <ArrowRight size={16} /></button>
       </form>
       <p className="mt-5 text-center text-sm text-muted">{signingUp ? "Already have an account?" : "New to Are You OK?"} <button type="button" className="font-semibold text-forest underline underline-offset-4" onClick={() => props.setMode(signingUp ? "signin" : "signup")}>{signingUp ? "Sign in" : "Create an account"}</button></p>
-      <p className="mt-4 text-center text-xs leading-5 text-muted">Your account ID is generated by Supabase. Your private notes stay private, and shared care data requires consent.</p>
+      <p className="mt-4 text-center text-xs leading-5 text-muted">No email address is required. Choose a unique username and keep your password safe. Your private notes stay private, and shared care data requires consent.</p>
       {props.error && <div className="mt-4"><InlineNotice kind="error" text={props.error} onClose={() => undefined} /></div>}
       <div className="mt-8 flex items-center gap-3 text-xs text-muted"><div className="h-px flex-1 bg-line" /> Private by default <div className="h-px flex-1 bg-line" /></div></div>
   </div></div>;
