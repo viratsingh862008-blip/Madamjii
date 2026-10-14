@@ -10,8 +10,14 @@ import {
   signInWithPassword, signUpWithPassword, signOut, supabase, supabaseConfigured, type AuthSession, type CareMembership,
 } from "./lib/supabase";
 import type { CareRole } from "./lib/care";
+import ScheduleView from "./components/ScheduleView";
+import CareDataView from "./components/CareDataView";
+import {
+  createTestNotification, enableBrowserPush, listNotifications, markNotificationRead,
+  showLocalNotification, type AppNotification,
+} from "./lib/notifications";
 
-type View = "today" | "schedule" | "messages" | "checkin" | "journal" | "reports" | "settings";
+type View = "today" | "schedule" | "messages" | "checkin" | "journal" | "reports" | "admin" | "settings";
 const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "today", label: "Today", icon: LayoutDashboard },
   { id: "schedule", label: "My schedule", icon: CalendarDays },
@@ -19,6 +25,7 @@ const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "checkin", label: "Daily check-in", icon: Heart },
   { id: "journal", label: "My journal", icon: BookHeart },
   { id: "reports", label: "Progress", icon: BarChart3 },
+  { id: "admin", label: "Admin controls", icon: ShieldCheck },
 ];
 const previewTasks = [
   { id: "meal", time: "9:00 AM", title: "A little nourishment", detail: "Breakfast · Something gentle and filling", icon: Utensils, tone: "peach" },
@@ -32,6 +39,7 @@ const viewCopy: Record<View, { title: string; subtitle: string }> = {
   checkin: { title: "How are you, really?", subtitle: "A small check-in is enough. You don't have to have the perfect words." },
   journal: { title: "A space just for you.", subtitle: "Your journal is private by default. Your thoughts belong to you." },
   reports: { title: "Progress, without pressure.", subtitle: "Look for small steps and patterns, never perfection." },
+  admin: { title: "Care space control room.", subtitle: "Manage invitations, review the system status, and move through the product setup one step at a time." },
   settings: { title: "Your care, your choices.", subtitle: "Manage your account, privacy and notification preferences." },
 };
 function localTimezone(): string {
@@ -51,7 +59,7 @@ export default function App() {
   const [view, setView] = useState<View>("today");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [completed, setCompleted] = useState<string[]>([]);
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signup");
@@ -61,6 +69,10 @@ export default function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(() => new URLSearchParams(window.location.search).get("invite"));
+  const [notificationItems, setNotificationItems] = useState<AppNotification[]>([]);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationBusy, setNotificationBusy] = useState(false);
+  const [pushStatus, setPushStatus] = useState("Not enabled");
 
   useEffect(() => {
     if (!supabase) { setAuthLoading(false); return; }
@@ -117,14 +129,76 @@ export default function App() {
 
   const membership = memberships[0];
   const isPreview = !supabaseConfigured;
+
+  async function refreshNotifications(showNewPush = false) {
+    if (!session || !supabase) return;
+    try {
+      const next = await listNotifications();
+      setNotificationItems((previous) => {
+        if (showNewPush && previous.length > 0 && next.length > 0) {
+          const known = new Set(previous.map((item) => item.id));
+          const newest = next.filter((item) => !known.has(item.id)).slice(0, 3);
+          newest.forEach((item) => { void showLocalNotification(item).catch(() => undefined); });
+        }
+        return next;
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Couldn't load notifications.");
+    }
+  }
+
+  useEffect(() => {
+    if (!session || !supabase) { setNotificationItems([]); return; }
+    void refreshNotifications(false);
+    const interval = window.setInterval(() => { void refreshNotifications(true); }, 45000);
+    return () => window.clearInterval(interval);
+  }, [session?.user.id]);
+
+  async function handleCreateTestNotification() {
+    setNotificationBusy(true); setError("");
+    try {
+      await createTestNotification();
+      await refreshNotifications(false);
+      setNotice("Test notification saved to your notification centre.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Couldn't create a test notification.");
+    } finally { setNotificationBusy(false); }
+  }
+
+  async function handleMarkNotificationRead(item: AppNotification) {
+    if (item.read_at) return;
+    try {
+      await markNotificationRead(item.id);
+      setNotificationItems((items) => items.map((current) => current.id === item.id ? { ...current, read_at: new Date().toISOString() } : current));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Couldn't update this notification.");
+    }
+  }
+
+  async function handleEnablePush() {
+    setNotificationBusy(true); setError("");
+    try {
+      const result = await enableBrowserPush();
+      const messages: Record<string, string> = {
+        enabled: "Browser push is subscribed on this device. Background delivery still needs the server-side VAPID sender to be configured.",
+        unsupported: "This browser does not support Web Push. In-app notifications remain available.",
+        "missing-key": "Push setup needs VITE_VAPID_PUBLIC_KEY in the Vercel environment. Do not put the private VAPID key in the frontend.",
+        denied: "Notification permission was not granted. You can still see updates in the in-app notification centre.",
+      };
+      setPushStatus(messages[result]);
+      if (result === "enabled") setNotice(messages[result]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Couldn't enable browser push.");
+    } finally { setNotificationBusy(false); }
+  }
   const role: CareRole = isPreview ? previewRole : (membership?.role ?? "friend");
   const copy = viewCopy[view];
 
   async function handlePasswordAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(""); setNotice("");
     try {
-      if (authMode === "signup") await signUpWithPassword(fullName, email.trim(), password);
-      else await signInWithPassword(email.trim(), password);
+      if (authMode === "signup") await signUpWithPassword(fullName.trim(), password);
+      else await signInWithPassword(username.trim(), password);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Couldn't authenticate your account.");
     } finally { setBusy(false); }
@@ -159,14 +233,14 @@ export default function App() {
 
   if (authLoading) return <LoadingScreen label="Opening your care space…" />;
   if (supabaseConfigured && !session) {
-    return <AuthScreen email={email} setEmail={setEmail} password={password} setPassword={setPassword} fullName={fullName} setFullName={setFullName} mode={authMode} setMode={setAuthMode} onSubmit={handlePasswordAuth} busy={busy} error={error} />;
+    return <AuthScreen username={username} setUsername={setUsername} password={password} setPassword={setPassword} fullName={fullName} setFullName={setFullName} mode={authMode} setMode={setAuthMode} onSubmit={handlePasswordAuth} busy={busy} error={error} />;
   }
   if (supabaseConfigured && session && pendingInviteToken) {
     return <InvitationConsentScreen busy={busy} error={error} onAccept={handleAcceptInvite} onDecline={declineInvite} />;
   }
   if (supabaseConfigured && session && membershipLoading) return <LoadingScreen label="Loading your private space…" />;
   if (supabaseConfigured && session && memberships.length === 0) {
-    return <OnboardingScreen email={session.user.email ?? ""} name={careSpaceName} setName={setCareSpaceName} onCreate={handleCreateCareSpace} busy={busy} error={error} onSignOut={handleSignOut} />;
+    return <OnboardingScreen email={String(session.user.user_metadata?.full_name ?? "Member")} name={careSpaceName} setName={setCareSpaceName} onCreate={handleCreateCareSpace} busy={busy} error={error} onSignOut={handleSignOut} />;
   }
 
   return (
@@ -178,31 +252,39 @@ export default function App() {
           <div><div className="font-display text-xl font-semibold tracking-tight">Are You OK?<span className="text-sage"></span></div><div className="text-[10px] uppercase tracking-[.2em] text-muted">Personal care companion</div></div>
           <button className="ml-auto rounded-xl p-2 hover:bg-sage-light lg:hidden" aria-label="Close menu" onClick={() => setMobileNavOpen(false)}><X size={18} /></button>
         </div>
-        <div className="mt-9 rounded-2xl border border-line bg-white/70 p-3"><div className="flex items-center gap-3"><div className="avatar-soft">{isPreview ? (role === "admin" ? "A" : "♡") : initials(session?.user.email ?? "Friend")}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{isPreview ? (role === "admin" ? "Care admin" : "Your care space") : (session?.user.email ?? "Member")}</div><div className="mt-0.5 text-xs text-muted">{role === "admin" ? "Care coordinator" : "Your personal space"}</div></div><span className="h-2 w-2 rounded-full bg-sage" /></div></div>
+        <div className="mt-9 rounded-2xl border border-line bg-white/70 p-3"><div className="flex items-center gap-3"><div className="avatar-soft">{isPreview ? (role === "admin" ? "A" : "♡") : initials(String(session?.user.user_metadata?.full_name ?? "Friend"))}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{isPreview ? (role === "admin" ? "Care admin" : "Your care space") : String(session?.user.user_metadata?.full_name ?? "Member")}</div><div className="mt-0.5 text-xs text-muted">{role === "admin" ? "Care coordinator" : "Your personal space"}</div></div><span className="h-2 w-2 rounded-full bg-sage" /></div></div>
         <div className="mt-8 px-3 text-[10px] font-semibold uppercase tracking-[.19em] text-muted">Your space</div>
-        <nav className="mt-3 flex flex-col gap-1">{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => { setView(item.id); setMobileNavOpen(false); }} className={"nav-link " + (view === item.id ? "nav-link-active" : "")}><Icon size={18} strokeWidth={1.8} /><span>{item.label}</span>{isPreview && item.id === "messages" && <span className="ml-auto rounded-full bg-sage-light px-2 py-0.5 text-[10px] text-forest">2</span>}</button>; })}</nav>
+        <nav className="mt-3 flex flex-col gap-1">{navItems.filter(item => item.id !== "admin" || role === "admin").map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => { setView(item.id); setMobileNavOpen(false); }} className={"nav-link " + (view === item.id ? "nav-link-active" : "")}><Icon size={18} strokeWidth={1.8} /><span>{item.label}</span>{isPreview && item.id === "messages" && <span className="ml-auto rounded-full bg-sage-light px-2 py-0.5 text-[10px] text-forest">2</span>}</button>; })}</nav>
         <div className="mt-auto pt-8"><div className="care-note"><div className="flex items-center gap-2 text-sm font-semibold"><Heart size={15} /> A gentle reminder</div><p className="mt-2 text-xs leading-5 text-muted">You don't have to do everything today. Small steps count, too.</p><div className="mt-3 flex items-center gap-1 text-[10px] font-semibold text-sage-dark"><Leaf size={12} /> CARE AT YOUR OWN PACE</div></div><button className="nav-link mt-3 w-full" onClick={() => setView("settings")}><CircleHelp size={18} /> Help & settings</button>{supabaseConfigured && <button className="nav-link mt-1 w-full" disabled={busy} onClick={handleSignOut}><LogOut size={18} /> Sign out</button>}</div>
       </aside>
 
       <main className="min-h-screen lg:pl-[268px]">
         <header className="sticky top-0 z-20 flex h-[76px] items-center justify-between border-b border-line/80 bg-cream/90 px-4 backdrop-blur-xl sm:px-7 lg:px-10">
           <div className="flex items-center gap-3"><button className="rounded-xl border border-line bg-white p-2 lg:hidden" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}><Menu size={19} /></button><div><div className="text-xs text-muted">{new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date())}</div><div className="mt-1 text-sm font-semibold">{isPreview ? "A space to feel supported" : (membership?.care_spaces?.name ?? "Your care space")}</div></div></div>
-          <div className="flex items-center gap-2 sm:gap-3">{isPreview ? <span className="preview-pill"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Preview mode</span> : <span className="connected-pill"><ShieldCheck size={13} /> Connected</span>}<button className="relative rounded-xl border border-line bg-white p-2.5 text-forest transition hover:bg-sage-light" aria-label="Notification settings" onClick={() => setView("settings")}><Bell size={18} /></button><div className="hidden h-9 w-9 items-center justify-center rounded-full bg-sage-light text-sm font-semibold text-forest sm:flex">{isPreview ? (role === "admin" ? "A" : "♡") : initials(session?.user.email ?? "F")}</div></div>
+          <div className="flex items-center gap-2 sm:gap-3">{isPreview ? <span className="preview-pill"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Preview mode</span> : <span className="connected-pill"><ShieldCheck size={13} /> Connected</span>}{supabaseConfigured && <button onClick={handleSignOut} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2.5 text-sm font-medium text-forest transition hover:bg-sage-light disabled:opacity-50" aria-label="Sign out"><LogOut size={16} /><span className="hidden sm:inline">{busy ? "Signing out…" : "Sign out"}</span></button>}<button className="relative rounded-xl border border-line bg-white p-2.5 text-forest transition hover:bg-sage-light" aria-label="Open notifications" aria-expanded={notificationOpen} onClick={() => { setNotificationOpen((open) => !open); if (!notificationOpen) void refreshNotifications(false); }}><Bell size={18} />{notificationItems.some((item) => !item.read_at) && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-terracotta ring-2 ring-cream" />}</button><div className="hidden h-9 w-9 items-center justify-center rounded-full bg-sage-light text-sm font-semibold text-forest sm:flex">{isPreview ? (role === "admin" ? "A" : "♡") : initials(String(session?.user.user_metadata?.full_name ?? "F"))}</div></div>
         </header>
+        {notificationOpen && <section className="sticky top-[76px] z-20 mx-4 mt-3 max-w-xl rounded-2xl border border-line bg-white p-4 shadow-soft sm:mx-auto sm:mr-7 lg:mr-10">
+          <div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">Notifications</h2><p className="mt-1 text-xs text-muted">Private to your account · retained for up to 90 days</p></div><button className="rounded-lg p-1.5 text-muted hover:bg-cream" aria-label="Close notifications" onClick={() => setNotificationOpen(false)}><X size={16} /></button></div>
+          <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
+            {notificationItems.length === 0 ? <p className="rounded-xl bg-cream p-4 text-xs leading-5 text-muted">No notifications yet. Use the test button below to verify the in-app notification centre.</p> : notificationItems.map((item) => <button key={item.id} onClick={() => void handleMarkNotificationRead(item)} className={"block w-full rounded-xl border p-3 text-left transition hover:bg-cream " + (item.read_at ? "border-line bg-white" : "border-sage/40 bg-sage-light/40")}><span className="flex items-start justify-between gap-2"><span className="text-sm font-semibold">{item.title}</span>{!item.read_at && <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-sage-dark" />}</span><span className="mt-1 block text-xs leading-5 text-muted">{item.body}</span><span className="mt-2 block text-[10px] text-muted">{new Date(item.created_at).toLocaleString()}</span></button>)}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2"><button disabled={notificationBusy} className="button-secondary flex-1 justify-center" onClick={() => void handleCreateTestNotification()}>{notificationBusy ? "Working…" : "Create test notification"}</button><button className="button-quiet" onClick={() => { setNotificationOpen(false); setView("settings"); }}>Push settings</button></div>
+        </section>}
         <div className="mx-auto max-w-[1440px] px-4 py-7 sm:px-7 sm:py-9 lg:px-10 lg:py-10">
           {notice && <InlineNotice kind="success" text={notice} onClose={() => setNotice("")} />}
           {error && <InlineNotice kind="error" text={error} onClose={() => setError("")} />}
           {isPreview && <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><Sparkles size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><p className="text-sm font-semibold text-amber-950">You're exploring a preview</p><p className="mt-0.5 text-xs leading-5 text-amber-900/80">Sample tasks and messages are illustrative only. Add Supabase credentials to enable secure accounts and persistence.</p></div></div><div className="flex shrink-0 gap-1 rounded-xl border border-amber-200 bg-white p-1"><button onClick={() => setPreviewRole("friend")} className={"rounded-lg px-3 py-1.5 text-xs font-semibold " + (role === "friend" ? "bg-forest text-white" : "text-muted hover:bg-cream")}>Friend view</button><button onClick={() => setPreviewRole("admin")} className={"rounded-lg px-3 py-1.5 text-xs font-semibold " + (role === "admin" ? "bg-forest text-white" : "text-muted hover:bg-cream")}>Admin view</button></div></div>}
-          {supabaseConfigured && membership && <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-sage/30 bg-sage-light/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><ShieldCheck size={18} className="mt-0.5 shrink-0 text-sage-dark" /><div><p className="text-sm font-semibold text-forest">Account connected · Milestone 1</p><p className="mt-0.5 text-xs leading-5 text-muted">Authentication and membership are connected. Schedule, message and notification data wiring comes next; this screen does not send reminders yet.</p></div></div>{role === "admin" && <button onClick={handleCreateInvite} disabled={busy} className="button-secondary shrink-0"><Plus size={15} /> Invite friend</button>}</div>}
+          {supabaseConfigured && membership && <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-sage/30 bg-sage-light/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><ShieldCheck size={18} className="mt-0.5 shrink-0 text-sage-dark" /><div><p className="text-sm font-semibold text-forest">Account connected · Milestone 1</p><p className="mt-0.5 text-xs leading-5 text-muted">Accounts and consent are connected. Schedule creation and approval are now wired to persistent data; background reminder delivery is the next step.</p></div></div>{role === "admin" && <button onClick={handleCreateInvite} disabled={busy} className="button-secondary shrink-0"><Plus size={15} /> Invite friend</button>}</div>}
           {inviteUrl && <div className="mb-6 rounded-2xl border border-line bg-white p-4"><div className="flex items-center gap-2 text-sm font-semibold"><LockKeyhole size={16} /> Private invitation link</div><p className="mt-1 text-xs text-muted">Share this only with your friend. It expires after 7 days and can be used once.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input readOnly value={inviteUrl} className="min-w-0 flex-1 rounded-xl border border-line bg-cream px-3 py-2 text-xs text-forest" /><button className="button-secondary" onClick={() => { void navigator.clipboard.writeText(inviteUrl).then(() => setNotice("Invitation link copied.")).catch(() => setError("Clipboard access was blocked. Select and copy the link manually.")); }}><Copy size={15} /> Copy link</button></div></div>}
           <div className="mb-8 flex flex-col justify-between gap-5 xl:flex-row xl:items-end"><div className="max-w-2xl"><div className="eyebrow"><span className="h-1.5 w-1.5 rounded-full bg-sage" /> A LITTLE CARE, THROUGHOUT THE DAY</div><h1 className="mt-4 font-display text-4xl font-medium leading-tight tracking-[-.045em] text-forest sm:text-5xl">{copy.title}</h1><p className="mt-3 max-w-xl text-sm leading-6 text-muted sm:text-base">{copy.subtitle}</p></div><div className="flex items-center gap-2"><div className="flex -space-x-2"><div className="avatar-soft ring-2 ring-cream">♡</div><div className="avatar-olive ring-2 ring-cream"><Heart size={15} /></div></div><div className="ml-1"><div className="text-xs font-semibold">{isPreview ? "Care, together" : role === "admin" ? "Care coordinator" : "Your care space"}</div><div className="mt-0.5 text-[11px] text-muted">{isPreview ? "A private space for two" : membership?.care_spaces?.timezone ?? localTimezone()}</div></div></div></div>
           {view === "today" && <TodayView isPreview={isPreview} role={role} completed={completed} setCompleted={setCompleted} onNavigate={setView} />}
-          {view === "schedule" && <FeaturePanel icon={<CalendarDays size={21} />} title="Your schedule" description="Personal routines and shared plans belong here. Shared routines become active only after your friend approves them." isPreview={isPreview} />}
-          {view === "messages" && <FeaturePanel icon={<MessageCircle size={21} />} title="Messages, made personal" description="Custom messages and a shared sender–recipient history will be connected in the next milestone. No messages are sent from this preview." isPreview={isPreview} />}
-          {view === "checkin" && <FeaturePanel icon={<Heart size={21} />} title="A gentle daily check-in" description="Mood and energy summaries can be shared by choice. Free-text check-in notes remain private." isPreview={isPreview} />}
-          {view === "journal" && <FeaturePanel icon={<BookHeart size={21} />} title="Your private journal" description="Journal entries are private to their author by default and never appear in shared reports." isPreview={isPreview} />}
-          {view === "reports" && <FeaturePanel icon={<BarChart3 size={21} />} title="Progress without pressure" description="Reports will include only the fields your friend has agreed to share. Private notes are excluded." isPreview={isPreview} />}
-          {view === "settings" && <SettingsPanel isPreview={isPreview} />}
+          {view === "schedule" && (isPreview ? <FeaturePanel icon={<CalendarDays size={21} />} title="Your schedule" description="Personal routines and shared plans belong here. Shared routines become active only after your friend approves them." isPreview /> : membership && <ScheduleView careSpaceId={membership.care_space_id} role={role} timezone={membership.care_spaces?.timezone ?? localTimezone()} isPreview={false} onNotice={setNotice} onError={setError} />)}
+          {view === "messages" && (isPreview ? <FeaturePanel icon={<MessageCircle size={21} />} title="Messages, made personal" description="Preview only. Connect Supabase and invite a friend to use persistent messages." isPreview /> : membership && session && <CareDataView view="messages" spaceId={membership.care_space_id} userId={session.user.id} role={role} onNotice={setNotice} onError={setError} />)}
+          {view === "checkin" && (isPreview ? <FeaturePanel icon={<Heart size={21} />} title="A gentle daily check-in" description="Preview only. Connect Supabase to save private check-ins." isPreview /> : membership && <CareDataView view="checkin" spaceId={membership.care_space_id} userId={session!.user.id} role={role} onNotice={setNotice} onError={setError} />)}
+          {view === "journal" && (isPreview ? <FeaturePanel icon={<BookHeart size={21} />} title="Your private journal" description="Preview only. Connect Supabase to save private journal entries." isPreview /> : membership && <CareDataView view="journal" spaceId={membership.care_space_id} userId={session!.user.id} role={role} onNotice={setNotice} onError={setError} />)}
+          {view === "reports" && (isPreview ? <FeaturePanel icon={<BarChart3 size={21} />} title="Progress without pressure" description="Preview only. Connect Supabase to view personal check-in trends." isPreview /> : membership && <CareDataView view="reports" spaceId={membership.care_space_id} userId={session!.user.id} role={role} onNotice={setNotice} onError={setError} />)}
+          {view === "admin" && <AdminPanel role={role} membershipName={membership?.care_spaces?.name ?? "Preview care space"} isPreview={isPreview} onNavigate={setView} onInvite={handleCreateInvite} busy={busy} />}
+          {view === "settings" && <SettingsPanel isPreview={isPreview} pushStatus={pushStatus} onEnablePush={handleEnablePush} pushBusy={notificationBusy} />}
         </div>
       </main>
     </div>
@@ -213,8 +295,8 @@ function LoadingScreen({ label }: { label: string }) {
   return <div className="min-h-screen grid place-items-center bg-cream text-forest"><div className="flex items-center gap-3"><span className="loading-dot" /><span className="text-sm font-medium">{label}</span></div></div>;
 }
 function AuthScreen(props: {
-  email: string;
-  setEmail: (value: string) => void;
+  username: string;
+  setUsername: (value: string) => void;
   password: string;
   setPassword: (value: string) => void;
   fullName: string;
@@ -228,15 +310,14 @@ function AuthScreen(props: {
   const signingUp = props.mode === "signup";
   return <div className="min-h-screen bg-cream p-4 sm:p-8"><div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl overflow-hidden rounded-[2rem] border border-line bg-white shadow-soft lg:grid-cols-[1.02fr_.98fr]">
     <div className="relative flex flex-col justify-between overflow-hidden bg-forest p-7 text-white sm:p-10 lg:p-12"><div className="absolute -right-24 -top-24 h-80 w-80 rounded-full border border-white/10" /><div className="relative flex items-center gap-3"><div className="brand-mark brand-mark-dark"><HeartHandshake size={22} /></div><div className="font-display text-xl font-semibold">Are You OK?<span className="text-[#b4c9a9]"></span></div></div><div className="relative my-12 max-w-md"><div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-white/80"><Heart size={13} /> A little care, throughout the day</div><h1 className="font-display text-4xl font-medium leading-tight tracking-[-.04em] sm:text-5xl">Care that feels like someone is there.</h1><p className="mt-5 max-w-sm text-sm leading-7 text-white/65">A private space for routines, thoughtful reminders and small check-ins — always with consent, never with pressure.</p></div><div className="relative flex items-center gap-3 text-xs text-white/60"><ShieldCheck size={15} /> Private by design. Shared by choice.</div></div>
-    <div className="flex flex-col justify-center p-7 sm:p-10 lg:p-14"><div className="mb-8"><div className="eyebrow"><LockKeyhole size={13} /> YOUR PRIVATE SPACE</div><h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-forest">{signingUp ? "Create your account." : "Welcome back."}</h2><p className="mt-2 text-sm leading-6 text-muted">{signingUp ? "Create a profile to get started. Your account receives its own secure ID automatically." : "Sign in with the email and password you registered with."}</p></div>
+    <div className="flex flex-col justify-center p-7 sm:p-10 lg:p-14"><div className="mb-8"><div className="eyebrow"><LockKeyhole size={13} /> YOUR PRIVATE SPACE</div><h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-forest">{signingUp ? "Create your account." : "Welcome back."}</h2><p className="mt-2 text-sm leading-6 text-muted">{signingUp ? "Create a profile to get started. Your account receives its own secure ID automatically." : "Sign in with your username and password."}</p></div>
       <form onSubmit={props.onSubmit} className="space-y-4">
-        {signingUp && <label className="block"><span className="mb-2 block text-xs font-semibold text-forest">Your name</span><input type="text" autoComplete="name" required minLength={2} maxLength={80} value={props.fullName} onChange={(event) => props.setFullName(event.target.value)} placeholder="Your name" className="form-input" /></label>}
-        <label className="block"><span className="mb-2 block text-xs font-semibold text-forest">Email address</span><input type="email" autoComplete="email" required maxLength={254} value={props.email} onChange={(event) => props.setEmail(event.target.value)} placeholder="you@example.com" className="form-input" /></label>
+        {<label className="block"><span className="mb-2 block text-xs font-semibold text-forest">{signingUp ? "Choose a username" : "Username"}</span><input type="text" autoComplete="username" required minLength={3} maxLength={24} pattern="[A-Za-z0-9._-]+" title="Use 3–24 letters, numbers, dots, underscores or hyphens." value={props.username || props.fullName} onChange={(event) => { props.setUsername(event.target.value); if (signingUp) props.setFullName(event.target.value); }} placeholder="e.g. aryan_08" className="form-input" /></label>}
         <label className="block"><span className="mb-2 block text-xs font-semibold text-forest">Password</span><input type="password" autoComplete={signingUp ? "new-password" : "current-password"} required minLength={8} maxLength={128} value={props.password} onChange={(event) => props.setPassword(event.target.value)} placeholder={signingUp ? "At least 8 characters" : "Your password"} className="form-input" /></label>
         <button disabled={props.busy} className="button-primary w-full justify-center" type="submit">{props.busy ? "Please wait…" : signingUp ? "Create account" : "Sign in"} <ArrowRight size={16} /></button>
       </form>
       <p className="mt-5 text-center text-sm text-muted">{signingUp ? "Already have an account?" : "New to Are You OK?"} <button type="button" className="font-semibold text-forest underline underline-offset-4" onClick={() => props.setMode(signingUp ? "signin" : "signup")}>{signingUp ? "Sign in" : "Create an account"}</button></p>
-      <p className="mt-4 text-center text-xs leading-5 text-muted">Your account ID is generated by Supabase. Your private notes stay private, and shared care data requires consent.</p>
+      <p className="mt-4 text-center text-xs leading-5 text-muted">No email address is required. Choose a unique username and keep your password safe. Your private notes stay private, and shared care data requires consent.</p>
       {props.error && <div className="mt-4"><InlineNotice kind="error" text={props.error} onClose={() => undefined} /></div>}
       <div className="mt-8 flex items-center gap-3 text-xs text-muted"><div className="h-px flex-1 bg-line" /> Private by default <div className="h-px flex-1 bg-line" /></div></div>
   </div></div>;
@@ -292,8 +373,8 @@ function TodayView(props: { isPreview: boolean; role: CareRole; completed: strin
             </div>
           ) : (
             <div className="mt-5 rounded-2xl border border-dashed border-line bg-cream p-5">
-              <div className="flex items-center gap-2 text-sm font-semibold"><CalendarDays size={16} /> Your real schedule is not connected yet</div>
-              <p className="mt-2 text-xs leading-5 text-muted">Milestone 1 establishes authentication and privacy boundaries. Real tasks will appear here after schedule persistence is implemented.</p>
+              <div className="flex items-center gap-2 text-sm font-semibold"><CalendarDays size={16} /> Your persistent schedule is ready</div>
+              <p className="mt-2 text-xs leading-5 text-muted">Open My schedule to view and manage your saved routines. Today view will receive a date-filtered occurrence list in a later UI pass.</p>
             </div>
           )}</section>
     <section className="rounded-[1.5rem] border border-line bg-white p-5 sm:p-6"><div className="flex items-center justify-between"><div><h2 className="font-display text-xl font-semibold tracking-tight">A note to keep close</h2><p className="mt-1 text-xs text-muted">A little reminder for the heart.</p></div><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-peach text-terracotta"><Heart size={18} /></div></div><p className="mt-4 font-display text-xl italic leading-relaxed text-forest">“You don't have to earn rest. You are allowed to take care of yourself, even on the days when everything feels difficult.”</p><div className="mt-4 text-[10px] font-semibold uppercase tracking-[.15em] text-muted">A GENTLE REMINDER · NOT A TASK</div></section>
@@ -306,16 +387,31 @@ function TodayView(props: { isPreview: boolean; role: CareRole; completed: strin
 function FeaturePanel(props: { icon: ReactNode; title: string; description: string; isPreview: boolean }) {
   return <section className="mx-auto max-w-3xl rounded-[1.75rem] border border-line bg-white p-7 sm:p-10"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sage-light text-sage-dark">{props.icon}</div><h2 className="mt-5 font-display text-2xl font-semibold tracking-tight">{props.title}</h2><p className="mt-3 max-w-xl text-sm leading-6 text-muted">{props.description}</p><div className="mt-7 rounded-2xl border border-dashed border-line bg-cream p-5"><div className="flex items-center gap-2 text-sm font-semibold"><Clock3 size={16} /> {props.isPreview ? "Preview only" : "Next implementation milestone"}</div><p className="mt-2 text-xs leading-5 text-muted">{props.isPreview ? "This section is a design preview. Actions will not persist or send notifications." : "This feature is not connected to live care data yet. No real reminder or message is being sent from this screen."}</p></div></section>;
 }
-function SettingsPanel({ isPreview }: { isPreview: boolean }) {
+function SettingsPanel({ isPreview, pushStatus, onEnablePush, pushBusy }: { isPreview: boolean; pushStatus: string; onEnablePush: () => void; pushBusy: boolean }) {
   const settings = [
     { icon: <Activity size={17} />, title: "Care activity", detail: "Changes to shared routines and permissions are auditable." },
     { icon: <LockKeyhole size={17} />, title: "Private by default", detail: "Your journal and free-text notes are not shared." },
     { icon: <Moon size={17} />, title: "Quiet hours", detail: "11:00 PM to 7:00 AM in your configured timezone." },
     { icon: <Clock3 size={17} />, title: "History retention", detail: "Eligible historical records are removed after 90 days." },
-    { icon: <Bell size={17} />, title: "Browser notifications", detail: "Push delivery will be connected in a later milestone." },
+    { icon: <Bell size={17} />, title: "Browser notifications", detail: "In-app notification centre is connected. Push needs browser permission and a public VAPID key; background delivery also needs a server-side sender." },
   ];
-  return <section className="mx-auto max-w-3xl rounded-[1.75rem] border border-line bg-white p-6 sm:p-9"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sage-light text-sage-dark"><ShieldCheck size={22} /></div><h2 className="mt-5 font-display text-2xl font-semibold">Your care, your choices.</h2><p className="mt-2 text-sm leading-6 text-muted">The finalized product uses consent-based sharing, private journal entries and a 90-day default history retention policy.</p><div className="mt-6 space-y-3">{settings.map((item) => <div key={item.title} className="flex items-start gap-3 rounded-2xl bg-cream p-4"><div className="mt-0.5 text-sage-dark">{item.icon}</div><div><div className="text-sm font-semibold">{item.title}</div><p className="mt-1 text-xs leading-5 text-muted">{item.detail}</p></div></div>)}</div>{isPreview && <div className="mt-5 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">Preview mode: preferences shown here are design defaults and are not saved.</div>}</section>;
+  return <section className="mx-auto max-w-3xl rounded-[1.75rem] border border-line bg-white p-6 sm:p-9"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sage-light text-sage-dark"><ShieldCheck size={22} /></div><h2 className="mt-5 font-display text-2xl font-semibold">Your care, your choices.</h2><p className="mt-2 text-sm leading-6 text-muted">The finalized product uses consent-based sharing, private journal entries and a 90-day default history retention policy.</p><div className="mt-6 space-y-3">{settings.map((item) => <div key={item.title} className="flex items-start gap-3 rounded-2xl bg-cream p-4"><div className="mt-0.5 text-sage-dark">{item.icon}</div><div><div className="text-sm font-semibold">{item.title}</div><p className="mt-1 text-xs leading-5 text-muted">{item.detail}</p></div></div>)}</div><div className="mt-5 rounded-2xl border border-line bg-white p-4"><div className="flex items-center gap-2 text-sm font-semibold"><Bell size={16} /> Browser push</div><p className="mt-2 text-xs leading-5 text-muted">{pushStatus}. The in-app notification centre works independently as a fallback.</p><button disabled={isPreview || pushBusy} onClick={onEnablePush} className="button-secondary mt-3 w-full justify-center">{pushBusy ? "Setting up…" : "Enable notifications on this device"}</button></div>{isPreview && <div className="mt-5 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">Preview mode: preferences shown here are design defaults and are not saved.</div>}</section>;
 }
 function InlineNotice(props: { kind: "success" | "error"; text: string; onClose: () => void }) {
   return <div role={props.kind === "error" ? "alert" : "status"} className={"mb-4 flex items-start gap-2 rounded-xl border p-3 text-sm " + (props.kind === "error" ? "border-red-200 bg-red-50 text-red-800" : "border-sage/30 bg-sage-light/70 text-forest")}><div className="mt-0.5">{props.kind === "error" ? <CircleHelp size={16} /> : <CheckCircle2 size={16} />}</div><p className="min-w-0 flex-1 leading-5">{props.text}</p><button aria-label="Dismiss message" onClick={props.onClose} className="rounded-md p-0.5 opacity-70 hover:opacity-100"><X size={14} /></button></div>;
+}
+
+
+function AdminPanel(props: { role: CareRole; membershipName: string; isPreview: boolean; onNavigate: (view: View) => void; onInvite: () => void; busy: boolean }) {
+  const actions = [
+    { title: "Create a schedule", detail: "Add a personal reminder or propose a shared routine for approval.", view: "schedule" as View, step: "01" },
+    { title: "Notification setup", detail: "Enable browser permission now; background push requires the server worker.", view: "settings" as View, step: "02" },
+    { title: "Message centre", detail: "Message composer and delivery history are still on the roadmap.", view: "messages" as View, step: "03" },
+    { title: "Daily check-in", detail: "Mood and energy capture with private notes is the next data workflow.", view: "checkin" as View, step: "04" },
+  ];
+  return <div className="space-y-5">
+    <section className="rounded-[1.5rem] border border-line bg-white p-5 sm:p-7"><div className="eyebrow"><ShieldCheck size={13}/> ADMIN WORKSPACE</div><div className="mt-3 flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div><h2 className="font-display text-2xl font-semibold">{props.membershipName}</h2><p className="mt-2 max-w-xl text-sm leading-6 text-muted">The admin can manage invitations and propose shared schedules. The friend retains approval, consent, and personal-data controls.</p></div><span className="connected-pill">{props.isPreview ? "Preview only" : "Admin controls"}</span></div><div className="mt-5 flex flex-wrap gap-2"><button disabled={props.isPreview || props.role!=="admin" || props.busy} className="button-primary" onClick={props.onInvite}><Plus size={15}/> Invite friend</button><button className="button-secondary" onClick={()=>props.onNavigate("schedule")}>Manage schedules <CalendarDays size={15}/></button></div>{props.isPreview && <p className="mt-3 text-xs text-muted">Sign in to persist admin actions. Preview mode does not write to Supabase.</p>}</section>
+    <section className="grid gap-3 md:grid-cols-2">{actions.map(a=><button key={a.step} onClick={()=>props.onNavigate(a.view)} className="rounded-2xl border border-line bg-white p-5 text-left transition hover:border-sage/50 hover:bg-sage-light/20"><div className="flex items-center justify-between"><span className="text-xs font-bold tracking-widest text-sage-dark">STEP {a.step}</span><ArrowRight size={16}/></div><h3 className="mt-4 text-sm font-semibold">{a.title}</h3><p className="mt-2 text-xs leading-5 text-muted">{a.detail}</p></button>)}</section>
+    <section className="rounded-2xl border border-line bg-white p-5"><h3 className="text-sm font-semibold">Release checklist</h3><div className="mt-3 space-y-2 text-xs leading-5 text-muted"><p>✓ Account, care-space membership, consent and private invitations</p><p>✓ Persistent one-time schedules and personal schedule controls</p><p>✓ Shared schedule proposal with friend approval / decline</p><p>✓ In-app notification inbox and browser subscription foundation</p><p>✓ Daily/weekly recurrence, task completion, five-minute snooze and one follow-up job</p><p>✓ Persistent messages, private check-ins/journal and personal progress reports</p><p>✓ Server-side reminder worker deployed; push keys and automatic scheduler still need configuration</p><p>○ Two-account end-to-end tests, account deletion/recovery and final production security review</p></div></section>
+  </div>;
 }

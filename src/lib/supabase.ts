@@ -22,22 +22,39 @@ export interface CareMembership {
   care_spaces: { id: string; name: string; timezone: string } | null;
 }
 
-export async function signInWithPassword(email: string, password: string): Promise<void> {
+const USERNAME_ALIAS_DOMAIN = "accounts.areyouok.app";
+
+export function usernameToAuthEmail(username: string): string {
+  const normalized = username.trim().toLowerCase();
+  if (!/^[a-z0-9._-]{3,24}$/.test(normalized)) {
+    throw new Error("Username must be 3–24 characters using letters, numbers, dots, underscores or hyphens.");
+  }
+  // Supabase Auth currently authenticates with email/phone. This deterministic
+  // internal alias lets the UI use usernames without collecting an email address.
+  // Email confirmation must remain disabled; this alias is not a real inbox.
+  return `${normalized}@${USERNAME_ALIAS_DOMAIN}`;
+}
+
+export async function signInWithPassword(username: string, password: string): Promise<void> {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await supabase.auth.signInWithPassword({ email: usernameToAuthEmail(username), password });
   if (error) throw error;
 }
 
-export async function signUpWithPassword(name: string, email: string, password: string): Promise<void> {
+export async function signUpWithPassword(username: string, password: string): Promise<void> {
   if (!supabase) throw new Error("Supabase is not configured.");
+  const normalized = username.trim().toLowerCase();
   const { data, error } = await supabase.auth.signUp({
-    email,
+    email: usernameToAuthEmail(normalized),
     password,
-    options: { data: { full_name: name.trim() } },
+    options: { data: { full_name: normalized, username: normalized } },
   });
-  if (error) throw error;
+  if (error) {
+    if (/already registered|already exists/i.test(error.message)) throw new Error("That username is already taken. Choose another one.");
+    throw error;
+  }
   if (!data.session) {
-    throw new Error("Email confirmation is still enabled in Supabase. Disable Confirm email in Authentication settings, then try again.");
+    throw new Error("Username signup requires Supabase email confirmation to be disabled. No real email address is collected.");
   }
 }
 
