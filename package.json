@@ -2,6 +2,7 @@
   "name": "im-here-care-companion",
   "private": true,
   "version": "0.1.0",
+  "engines": { "node": ">=22.12.0" },
   "type": "module",
   "scripts": {
     "dev": "vite",
