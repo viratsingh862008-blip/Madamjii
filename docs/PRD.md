@@ -22,7 +22,8 @@ A private two-person care companion for routines, caring messages and daily chec
 
 ## Milestone 1 scope
 - Responsive care dashboard design and role preview.
-- Supabase email OTP/magic-link authentication.
+- Public email/password signup with a required display name; Supabase generates the immutable user UUID. Email confirmation is disabled for frictionless registration, while authenticated sessions and RLS remain mandatory.
+- Email/password sign-in and sign-out.
 - Create a private care space with owner membership created by a database trigger.
 - Create and accept a private single-use invitation through restricted RPC functions and explicit consent screen.
 - Foundational PostgreSQL schema and RLS.
@@ -51,4 +52,6 @@ Live schedule editing, reminder queue workers, browser push subscription registr
 6. The shared check-in summary contains no free-text note and requires explicit opt-in.
 7. Invitation acceptance requires explicit consent to shared schedules and message history.
 8. Browser preview data is clearly labeled and never persisted.
+9. New users can register without email confirmation, and Supabase assigns each account a unique UUID.
+10. Users cannot read or mutate another user's private records.
 9. Typecheck, unit tests and production build pass in CI before merge.
