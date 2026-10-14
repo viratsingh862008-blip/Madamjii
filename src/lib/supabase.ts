@@ -26,16 +26,20 @@ export async function sendMagicLink(email: string): Promise<void> {
   if (!supabase) throw new Error("Supabase is not configured.");
   const { error } = await supabase.auth.signInWithOtp({
     email,
-    options: { emailRedirectTo: window.location.origin },
+    options: { emailRedirectTo: window.location.origin + window.location.pathname + window.location.search },
   });
   if (error) throw error;
 }
 
 export async function getMemberships(): Promise<CareMembership[]> {
   if (!supabase) throw new Error("Supabase is not configured.");
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  if (!userData.user) throw new Error("Sign in to view your care spaces.");
   const { data, error } = await supabase
     .from("care_members")
     .select("care_space_id, role, membership_status, care_spaces ( id, name, timezone )")
+    .eq("user_id", userData.user.id)
     .eq("membership_status", "active");
   if (error) throw error;
   return (data ?? []) as unknown as CareMembership[];
