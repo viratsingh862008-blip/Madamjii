@@ -324,7 +324,7 @@ begin
     raise exception 'Only the care admin can invite a member' using errcode = '42501';
   end if;
   update public.care_invitations set revoked_at = now()
-    where care_space_id = p_care_space_id and accepted_at is null and revoked_at is null and expires_at <= now();
+    where care_space_id = p_care_space_id and accepted_at is null and revoked_at is null;
   select count(*) into v_friend_count from public.care_members
     where care_space_id = p_care_space_id and role = 'friend' and membership_status = 'active';
   if v_friend_count > 0 then raise exception 'This care space already has its friend member' using errcode = '23505'; end if;
