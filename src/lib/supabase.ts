@@ -66,15 +66,14 @@ export async function createCareInvitation(careSpaceId: string): Promise<string>
   return data;
 }
 
-export async function acceptCareInvitation(token: string): Promise<string> {
+export async function acceptCareInvitation(
+  token: string,
+  scope: { shared_schedules: boolean; daily_summary: boolean; message_history: boolean },
+): Promise<string> {
   if (!supabase) throw new Error("Supabase is not configured.");
   const { data, error } = await supabase.rpc("accept_care_invitation", {
     p_token: token,
-    p_consent_scope: {
-      shared_schedules: true,
-      daily_summary: true,
-      message_history: true,
-    },
+    p_consent_scope: scope,
   });
   if (error) throw error;
   if (typeof data !== "string") throw new Error("The invitation could not be accepted.");
