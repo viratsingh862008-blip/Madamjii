@@ -52,3 +52,13 @@ GitHub Actions runs these checks on the feature branch. The workflow result must
 - The migrations use RLS, a database-owned profile creation trigger linked to each Auth UUID, own-profile-only read/update policies, restricted RPC execution grants, hashed single-use invitation tokens, explicit invitation consent, and a private helper schema.
 - The schema has been applied to the configured Supabase project and verified to contain 18 public tables with RLS enabled. Automated advisors still flag intentional `SECURITY DEFINER` RPCs callable by authenticated users and five server-only tables with no client policies; do not store personal or health-related data until end-to-end authorization tests and consent/revocation flows are completed.
 - See `docs/PRD.md` for finalized product decisions and current scope.
+
+## Free notifications (implementation status)
+
+- Persistent in-app notification centre uses `public.app_notifications`; row-level security restricts records to their owner and records expire after 90 days.
+- Browser service worker is in `public/sw.js`; it handles incoming Web Push payloads and notification clicks.
+- Per-user browser subscriptions are stored in `public.browser_push_subscriptions` with owner-only RLS.
+- In-app polling runs while a signed-in app tab is open and can surface newly created notifications through the browser Notification API when permission is granted.
+- Set `VITE_VAPID_PUBLIC_KEY` in Vercel to allow Web Push subscription. The corresponding private VAPID key must only be configured as a server-side secret. Background push sending and scheduled reminder dispatch are not active until a server-side sender and scheduled worker are configured and tested.
+- No paid SMS/WhatsApp provider or n8n instance is required for this initial architecture. Free platform quotas and delivery limitations still apply.
+- Apply migration `supabase/migrations/20261015150000_free_notifications_foundation.sql` before testing. The dev Supabase project has this migration applied; production must be migrated separately before release.
