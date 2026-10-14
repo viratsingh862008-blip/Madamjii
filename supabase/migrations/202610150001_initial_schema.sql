@@ -2,7 +2,8 @@
 -- Apply in a non-production Supabase project first. Never expose service-role credentials to the browser.
 
 begin;
-create extension if not exists pgcrypto;
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 create schema if not exists private;
 revoke all on schema private from public, anon;
 grant usage on schema private to authenticated;
@@ -260,6 +261,23 @@ create trigger guard_schedule_identity_before_update
 before update on public.care_schedules
 for each row execute function private.guard_schedule_identity();
 
+create or replace function private.guard_message_identity()
+returns trigger language plpgsql set search_path = ''
+as $
+begin
+  if new.care_space_id is distinct from old.care_space_id
+    or new.sender_user_id is distinct from old.sender_user_id
+    or new.recipient_user_id is distinct from old.recipient_user_id then
+    raise exception 'Message conversation participants are immutable'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$;
+create trigger guard_message_identity_before_update
+before update on public.care_messages
+for each row execute function private.guard_message_identity();
+
 create or replace function private.sync_checkin_summary()
 returns trigger language plpgsql security definer set search_path = ''
 as $$
@@ -292,6 +310,7 @@ revoke all on function private.current_member_role(uuid) from public, anon;
 revoke all on function private.add_owner_membership() from public, anon, authenticated;
 revoke all on function private.sync_checkin_summary() from public, anon, authenticated;
 revoke all on function private.guard_schedule_identity() from public, anon, authenticated;
+revoke all on function private.guard_message_identity() from public, anon, authenticated;
 grant execute on function private.is_active_member(uuid) to authenticated;
 grant execute on function private.current_member_role(uuid) to authenticated;
 
@@ -377,7 +396,7 @@ begin
   insert into public.schedule_approvals(schedule_id, schedule_version, reviewer_user_id, decision, note)
     values (p_schedule_id, p_schedule_version, auth.uid(), p_decision, left(p_note, 500));
   update public.care_schedules set status = case p_decision
-    when 'approved' then 'active' when 'declined' then 'declined' else 'proposed' end, updated_at = now()
+    when 'approved' then 'active' when 'declined' then 'declined' else 'paused' end, updated_at = now()
     where id = p_schedule_id;
   insert into public.audit_events(care_space_id, actor_user_id, entity_type, entity_id, action, metadata)
     values (v_schedule.care_space_id, auth.uid(), 'care_schedule', p_schedule_id, 'reviewed',
@@ -454,16 +473,10 @@ create policy "members create allowed schedules" on public.care_schedules for in
     (scope = 'personal' and owner_user_id = auth.uid() and status = 'active') or
     (scope = 'shared' and owner_user_id is null and private.current_member_role(care_space_id) = 'admin' and status = 'proposed')
   ));
-create policy "owners update personal schedules and admins update proposals" on public.care_schedules for update to authenticated
-  using (private.is_active_member(care_space_id) and (
-    (scope = 'personal' and owner_user_id = auth.uid()) or
-    (scope = 'shared' and created_by = auth.uid() and private.current_member_role(care_space_id) = 'admin' and status = 'proposed')
-  ))
-  with check (private.is_active_member(care_space_id) and (
-    (scope = 'personal' and owner_user_id = auth.uid() and created_by = auth.uid()) or
-    (scope = 'shared' and created_by = auth.uid() and private.current_member_role(care_space_id) = 'admin'
-      and owner_user_id is null and status = 'proposed')
-  ));
+create policy "owners update personal schedules only" on public.care_schedules for update to authenticated
+  using (scope = 'personal' and owner_user_id = auth.uid() and private.is_active_member(care_space_id))
+  with check (scope = 'personal' and owner_user_id = auth.uid() and created_by = auth.uid()
+    and private.is_active_member(care_space_id));
 create policy "owners delete personal schedules" on public.care_schedules for delete to authenticated
   using (scope = 'personal' and owner_user_id = auth.uid() and private.is_active_member(care_space_id));
 
