@@ -37,6 +37,14 @@ Without Supabase environment variables, the site runs in **preview mode** using 
 
 GitHub Actions runs these checks on the feature branch. The workflow result must be inspected before the code is described as verified.
 
+## Signup data for development testing
+
+- Supabase **Authentication → Users** records each account's Auth UUID, internal auth alias, creation time, and last sign-in metadata where available.
+- The `public.profiles` table stores the normalized username, display name, and timestamps. The signup trigger creates the profile automatically; the username is not editable by ordinary client updates.
+- To inspect test accounts, use the Supabase Dashboard's Authentication user list and Table Editor for `public.profiles`. The profile table uses RLS so a signed-in user can only read their own row; inspect all test profiles from the trusted Supabase Dashboard, not by making the table public.
+- **Passwords are never collected in a readable form or copied into a table/log.** Supabase Auth handles password storage. Do not log passwords, session tokens, or private care data for testing.
+- Use synthetic test accounts and non-sensitive sample data while end-to-end authorization and consent tests are still in progress.
+
 ## Security
 
 - Never put Supabase service-role keys or Web Push private keys in frontend environment variables.
