@@ -1,4 +1,4 @@
-# I'm Here — Milestone 1 Product Requirements
+# Are You OK? — Milestone 1 Product Requirements
 
 ## Product promise
 A private two-person care companion for routines, caring messages and daily check-ins. Care without control: the friend retains control over personal routines, consent, quiet hours and shared information.
