@@ -62,3 +62,35 @@ GitHub Actions runs these checks on the feature branch. The workflow result must
 - Set `VITE_VAPID_PUBLIC_KEY` in Vercel to allow Web Push subscription. The corresponding private VAPID key must only be configured as a server-side secret. Background push sending and scheduled reminder dispatch are not active until a server-side sender and scheduled worker are configured and tested.
 - No paid SMS/WhatsApp provider or n8n instance is required for this initial architecture. Free platform quotas and delivery limitations still apply.
 - Apply migrations `supabase/migrations/20261015150000_free_notifications_foundation.sql`, `supabase/migrations/20261015160000_persistent_schedule_creation_and_review.sql`, and `supabase/migrations/20261015161500_shared_schedule_approval_queues_reminder.sql` before testing. These migrations have been applied to the configured dev Supabase project; production must be migrated separately before release.
+
+
+## Product milestone: six workflows
+
+Implemented in this branch:
+1. **Reminder engine foundation:** Supabase Edge Function `reminder-worker` claims queued jobs safely, applies quiet-hours deferral, creates private in-app notifications, attempts Web Push when VAPID secrets exist, retries temporary failures, disables expired subscriptions, and creates one 30-minute follow-up per pending occurrence.
+2. **Recurring schedules:** schedule form supports one-time, daily and weekly patterns; the worker generates the next occurrence after the current one is due. Completion cancels outstanding jobs. Snooze creates a five-minute reminder and is limited to three snoozes per occurrence.
+3. **Messages:** persisted sender/recipient conversation history and immediate sending in the care space. Scheduled message sending is not yet enabled.
+4. **Daily check-ins:** mood, energy and private note persistence; optional summary fields are copied separately for consent-aware sharing.
+5. **Private journal and progress:** create/edit/delete journal entries; personal check-in trend counts, average energy and recent mood.
+6. **Privacy/retention hardening:** RLS on new tables, server-side RPC validation, worker-only queue claim/finish/retention RPCs, bounded retries, idempotency keys, and 90-day cleanup logic.
+
+### Activate scheduled delivery (required before real reminders)
+
+The Edge Function is deployed to the development Supabase project, but **automatic invocation and real Web Push are not active until these project secrets and a scheduler are configured**. Do not put the service-role key or VAPID private key in Vite variables or GitHub.
+
+Supabase Edge Function secrets (Dashboard → Edge Functions → Secrets):
+- `VAPID_PUBLIC_KEY`: Web Push public key
+- `VAPID_PRIVATE_KEY`: Web Push private key
+- `VAPID_SUBJECT`: a contact URI such as `mailto:admin@your-owned-domain.example`
+
+Vercel project environment:
+- `VITE_VAPID_PUBLIC_KEY`: the matching **public** VAPID key only; redeploy after adding it.
+
+Then configure a trusted Supabase Cron job to POST to `https://mjuoroaynwczndrluarq.supabase.co/functions/v1/reminder-worker` every minute with `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>` and `Content-Type: application/json`. Store the service-role key in Supabase Vault/Cron secrets; never put it in browser code, a public repository, or a client-visible environment variable. The worker rejects requests without this server credential. Check the function logs and verify a test job from two separate accounts before relying on delivery. Supabase/Vercel free-tier limits and browser/OS notification settings still apply.
+
+### Safety and current limitations
+
+- A READY deployment is not a substitute for integration testing. Test signup, invitation acceptance, friend approval, two-account messaging, task completion/snooze, quiet-hours deferral, retries, and retention in a non-production care space first.
+- Web Push is best-effort, not guaranteed. In-app notifications are the fallback when the app is opened; if VAPID or the scheduler is missing, the app cannot promise a background alert.
+- Medicine schedules store user-provided instructions only. The app is not a medical service or emergency monitor.
+- Review the security advisor and RLS policies before production; never store real sensitive notes until account deletion/recovery and consent-revocation flows have been end-to-end tested.
