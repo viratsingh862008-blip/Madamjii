@@ -75,9 +75,11 @@ export async function acceptCareInvitation(
   scope: { shared_schedules: boolean; daily_summary: boolean; message_history: boolean },
 ): Promise<string> {
   if (!supabase) throw new Error("Supabase is not configured.");
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata";
   const { data, error } = await supabase.rpc("accept_care_invitation", {
     p_token: token,
     p_consent_scope: scope,
+    p_timezone: timezone,
   });
   if (error) throw error;
   if (typeof data !== "string") throw new Error("The invitation could not be accepted.");
