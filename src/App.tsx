@@ -10,12 +10,13 @@ import {
   signInWithPassword, signUpWithPassword, signOut, supabase, supabaseConfigured, type AuthSession, type CareMembership,
 } from "./lib/supabase";
 import type { CareRole } from "./lib/care";
+import ScheduleView from "./components/ScheduleView";
 import {
   createTestNotification, enableBrowserPush, listNotifications, markNotificationRead,
   showLocalNotification, type AppNotification,
 } from "./lib/notifications";
 
-type View = "today" | "schedule" | "messages" | "checkin" | "journal" | "reports" | "settings";
+type View = "today" | "schedule" | "messages" | "checkin" | "journal" | "reports" | "admin" | "settings";
 const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "today", label: "Today", icon: LayoutDashboard },
   { id: "schedule", label: "My schedule", icon: CalendarDays },
@@ -23,6 +24,7 @@ const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "checkin", label: "Daily check-in", icon: Heart },
   { id: "journal", label: "My journal", icon: BookHeart },
   { id: "reports", label: "Progress", icon: BarChart3 },
+  { id: "admin", label: "Admin controls", icon: ShieldCheck },
 ];
 const previewTasks = [
   { id: "meal", time: "9:00 AM", title: "A little nourishment", detail: "Breakfast · Something gentle and filling", icon: Utensils, tone: "peach" },
@@ -36,6 +38,7 @@ const viewCopy: Record<View, { title: string; subtitle: string }> = {
   checkin: { title: "How are you, really?", subtitle: "A small check-in is enough. You don't have to have the perfect words." },
   journal: { title: "A space just for you.", subtitle: "Your journal is private by default. Your thoughts belong to you." },
   reports: { title: "Progress, without pressure.", subtitle: "Look for small steps and patterns, never perfection." },
+  admin: { title: "Care space control room.", subtitle: "Manage invitations, review the system status, and move through the product setup one step at a time." },
   settings: { title: "Your care, your choices.", subtitle: "Manage your account, privacy and notification preferences." },
 };
 function localTimezone(): string {
@@ -250,7 +253,7 @@ export default function App() {
         </div>
         <div className="mt-9 rounded-2xl border border-line bg-white/70 p-3"><div className="flex items-center gap-3"><div className="avatar-soft">{isPreview ? (role === "admin" ? "A" : "♡") : initials(String(session?.user.user_metadata?.full_name ?? "Friend"))}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{isPreview ? (role === "admin" ? "Care admin" : "Your care space") : String(session?.user.user_metadata?.full_name ?? "Member")}</div><div className="mt-0.5 text-xs text-muted">{role === "admin" ? "Care coordinator" : "Your personal space"}</div></div><span className="h-2 w-2 rounded-full bg-sage" /></div></div>
         <div className="mt-8 px-3 text-[10px] font-semibold uppercase tracking-[.19em] text-muted">Your space</div>
-        <nav className="mt-3 flex flex-col gap-1">{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => { setView(item.id); setMobileNavOpen(false); }} className={"nav-link " + (view === item.id ? "nav-link-active" : "")}><Icon size={18} strokeWidth={1.8} /><span>{item.label}</span>{isPreview && item.id === "messages" && <span className="ml-auto rounded-full bg-sage-light px-2 py-0.5 text-[10px] text-forest">2</span>}</button>; })}</nav>
+        <nav className="mt-3 flex flex-col gap-1">{navItems.filter(item => item.id !== "admin" || role === "admin").map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => { setView(item.id); setMobileNavOpen(false); }} className={"nav-link " + (view === item.id ? "nav-link-active" : "")}><Icon size={18} strokeWidth={1.8} /><span>{item.label}</span>{isPreview && item.id === "messages" && <span className="ml-auto rounded-full bg-sage-light px-2 py-0.5 text-[10px] text-forest">2</span>}</button>; })}</nav>
         <div className="mt-auto pt-8"><div className="care-note"><div className="flex items-center gap-2 text-sm font-semibold"><Heart size={15} /> A gentle reminder</div><p className="mt-2 text-xs leading-5 text-muted">You don't have to do everything today. Small steps count, too.</p><div className="mt-3 flex items-center gap-1 text-[10px] font-semibold text-sage-dark"><Leaf size={12} /> CARE AT YOUR OWN PACE</div></div><button className="nav-link mt-3 w-full" onClick={() => setView("settings")}><CircleHelp size={18} /> Help & settings</button>{supabaseConfigured && <button className="nav-link mt-1 w-full" disabled={busy} onClick={handleSignOut}><LogOut size={18} /> Sign out</button>}</div>
       </aside>
 
@@ -270,15 +273,16 @@ export default function App() {
           {notice && <InlineNotice kind="success" text={notice} onClose={() => setNotice("")} />}
           {error && <InlineNotice kind="error" text={error} onClose={() => setError("")} />}
           {isPreview && <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><Sparkles size={18} className="mt-0.5 shrink-0 text-amber-700" /><div><p className="text-sm font-semibold text-amber-950">You're exploring a preview</p><p className="mt-0.5 text-xs leading-5 text-amber-900/80">Sample tasks and messages are illustrative only. Add Supabase credentials to enable secure accounts and persistence.</p></div></div><div className="flex shrink-0 gap-1 rounded-xl border border-amber-200 bg-white p-1"><button onClick={() => setPreviewRole("friend")} className={"rounded-lg px-3 py-1.5 text-xs font-semibold " + (role === "friend" ? "bg-forest text-white" : "text-muted hover:bg-cream")}>Friend view</button><button onClick={() => setPreviewRole("admin")} className={"rounded-lg px-3 py-1.5 text-xs font-semibold " + (role === "admin" ? "bg-forest text-white" : "text-muted hover:bg-cream")}>Admin view</button></div></div>}
-          {supabaseConfigured && membership && <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-sage/30 bg-sage-light/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><ShieldCheck size={18} className="mt-0.5 shrink-0 text-sage-dark" /><div><p className="text-sm font-semibold text-forest">Account connected · Milestone 1</p><p className="mt-0.5 text-xs leading-5 text-muted">Authentication and membership are connected. Schedule, message and notification data wiring comes next; this screen does not send reminders yet.</p></div></div>{role === "admin" && <button onClick={handleCreateInvite} disabled={busy} className="button-secondary shrink-0"><Plus size={15} /> Invite friend</button>}</div>}
+          {supabaseConfigured && membership && <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-sage/30 bg-sage-light/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><ShieldCheck size={18} className="mt-0.5 shrink-0 text-sage-dark" /><div><p className="text-sm font-semibold text-forest">Account connected · Milestone 1</p><p className="mt-0.5 text-xs leading-5 text-muted">Accounts and consent are connected. Schedule creation and approval are now wired to persistent data; background reminder delivery is the next step.</p></div></div>{role === "admin" && <button onClick={handleCreateInvite} disabled={busy} className="button-secondary shrink-0"><Plus size={15} /> Invite friend</button>}</div>}
           {inviteUrl && <div className="mb-6 rounded-2xl border border-line bg-white p-4"><div className="flex items-center gap-2 text-sm font-semibold"><LockKeyhole size={16} /> Private invitation link</div><p className="mt-1 text-xs text-muted">Share this only with your friend. It expires after 7 days and can be used once.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input readOnly value={inviteUrl} className="min-w-0 flex-1 rounded-xl border border-line bg-cream px-3 py-2 text-xs text-forest" /><button className="button-secondary" onClick={() => { void navigator.clipboard.writeText(inviteUrl).then(() => setNotice("Invitation link copied.")).catch(() => setError("Clipboard access was blocked. Select and copy the link manually.")); }}><Copy size={15} /> Copy link</button></div></div>}
           <div className="mb-8 flex flex-col justify-between gap-5 xl:flex-row xl:items-end"><div className="max-w-2xl"><div className="eyebrow"><span className="h-1.5 w-1.5 rounded-full bg-sage" /> A LITTLE CARE, THROUGHOUT THE DAY</div><h1 className="mt-4 font-display text-4xl font-medium leading-tight tracking-[-.045em] text-forest sm:text-5xl">{copy.title}</h1><p className="mt-3 max-w-xl text-sm leading-6 text-muted sm:text-base">{copy.subtitle}</p></div><div className="flex items-center gap-2"><div className="flex -space-x-2"><div className="avatar-soft ring-2 ring-cream">♡</div><div className="avatar-olive ring-2 ring-cream"><Heart size={15} /></div></div><div className="ml-1"><div className="text-xs font-semibold">{isPreview ? "Care, together" : role === "admin" ? "Care coordinator" : "Your care space"}</div><div className="mt-0.5 text-[11px] text-muted">{isPreview ? "A private space for two" : membership?.care_spaces?.timezone ?? localTimezone()}</div></div></div></div>
           {view === "today" && <TodayView isPreview={isPreview} role={role} completed={completed} setCompleted={setCompleted} onNavigate={setView} />}
-          {view === "schedule" && <FeaturePanel icon={<CalendarDays size={21} />} title="Your schedule" description="Personal routines and shared plans belong here. Shared routines become active only after your friend approves them." isPreview={isPreview} />}
+          {view === "schedule" && (isPreview ? <FeaturePanel icon={<CalendarDays size={21} />} title="Your schedule" description="Personal routines and shared plans belong here. Shared routines become active only after your friend approves them." isPreview /> : membership && <ScheduleView careSpaceId={membership.care_space_id} role={role} timezone={membership.care_spaces?.timezone ?? localTimezone()} isPreview={false} onNotice={setNotice} onError={setError} />)}
           {view === "messages" && <FeaturePanel icon={<MessageCircle size={21} />} title="Messages, made personal" description="Custom messages and a shared sender–recipient history will be connected in the next milestone. No messages are sent from this preview." isPreview={isPreview} />}
           {view === "checkin" && <FeaturePanel icon={<Heart size={21} />} title="A gentle daily check-in" description="Mood and energy summaries can be shared by choice. Free-text check-in notes remain private." isPreview={isPreview} />}
           {view === "journal" && <FeaturePanel icon={<BookHeart size={21} />} title="Your private journal" description="Journal entries are private to their author by default and never appear in shared reports." isPreview={isPreview} />}
           {view === "reports" && <FeaturePanel icon={<BarChart3 size={21} />} title="Progress without pressure" description="Reports will include only the fields your friend has agreed to share. Private notes are excluded." isPreview={isPreview} />}
+          {view === "admin" && <AdminPanel role={role} membershipName={membership?.care_spaces?.name ?? "Preview care space"} isPreview={isPreview} onNavigate={setView} onInvite={handleCreateInvite} busy={busy} />}
           {view === "settings" && <SettingsPanel isPreview={isPreview} pushStatus={pushStatus} onEnablePush={handleEnablePush} pushBusy={notificationBusy} />}
         </div>
       </main>
@@ -394,4 +398,19 @@ function SettingsPanel({ isPreview, pushStatus, onEnablePush, pushBusy }: { isPr
 }
 function InlineNotice(props: { kind: "success" | "error"; text: string; onClose: () => void }) {
   return <div role={props.kind === "error" ? "alert" : "status"} className={"mb-4 flex items-start gap-2 rounded-xl border p-3 text-sm " + (props.kind === "error" ? "border-red-200 bg-red-50 text-red-800" : "border-sage/30 bg-sage-light/70 text-forest")}><div className="mt-0.5">{props.kind === "error" ? <CircleHelp size={16} /> : <CheckCircle2 size={16} />}</div><p className="min-w-0 flex-1 leading-5">{props.text}</p><button aria-label="Dismiss message" onClick={props.onClose} className="rounded-md p-0.5 opacity-70 hover:opacity-100"><X size={14} /></button></div>;
+}
+
+
+function AdminPanel(props: { role: CareRole; membershipName: string; isPreview: boolean; onNavigate: (view: View) => void; onInvite: () => void; busy: boolean }) {
+  const actions = [
+    { title: "Create a schedule", detail: "Add a personal reminder or propose a shared routine for approval.", view: "schedule" as View, step: "01" },
+    { title: "Notification setup", detail: "Enable browser permission now; background push requires the server worker.", view: "settings" as View, step: "02" },
+    { title: "Message centre", detail: "Message composer and delivery history are still on the roadmap.", view: "messages" as View, step: "03" },
+    { title: "Daily check-in", detail: "Mood and energy capture with private notes is the next data workflow.", view: "checkin" as View, step: "04" },
+  ];
+  return <div className="space-y-5">
+    <section className="rounded-[1.5rem] border border-line bg-white p-5 sm:p-7"><div className="eyebrow"><ShieldCheck size={13}/> ADMIN WORKSPACE</div><div className="mt-3 flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div><h2 className="font-display text-2xl font-semibold">{props.membershipName}</h2><p className="mt-2 max-w-xl text-sm leading-6 text-muted">The admin can manage invitations and propose shared schedules. The friend retains approval, consent, and personal-data controls.</p></div><span className="connected-pill">{props.isPreview ? "Preview only" : "Admin controls"}</span></div><div className="mt-5 flex flex-wrap gap-2"><button disabled={props.isPreview || props.role!=="admin" || props.busy} className="button-primary" onClick={props.onInvite}><Plus size={15}/> Invite friend</button><button className="button-secondary" onClick={()=>props.onNavigate("schedule")}>Manage schedules <CalendarDays size={15}/></button></div>{props.isPreview && <p className="mt-3 text-xs text-muted">Sign in to persist admin actions. Preview mode does not write to Supabase.</p>}</section>
+    <section className="grid gap-3 md:grid-cols-2">{actions.map(a=><button key={a.step} onClick={()=>props.onNavigate(a.view)} className="rounded-2xl border border-line bg-white p-5 text-left transition hover:border-sage/50 hover:bg-sage-light/20"><div className="flex items-center justify-between"><span className="text-xs font-bold tracking-widest text-sage-dark">STEP {a.step}</span><ArrowRight size={16}/></div><h3 className="mt-4 text-sm font-semibold">{a.title}</h3><p className="mt-2 text-xs leading-5 text-muted">{a.detail}</p></button>)}</section>
+    <section className="rounded-2xl border border-line bg-white p-5"><h3 className="text-sm font-semibold">Release checklist</h3><div className="mt-3 space-y-2 text-xs leading-5 text-muted"><p>✓ Account, care-space membership, consent and private invitations</p><p>✓ Persistent one-time schedules and personal schedule controls</p><p>✓ Shared schedule proposal with friend approval / decline</p><p>✓ In-app notification inbox and browser subscription foundation</p><p>○ Recurring schedule generation and reminder worker</p><p>○ Web Push server sender, quiet-hours deferral, snooze and 30-minute follow-up</p><p>○ Persistent check-ins, private journal, messaging, reports and 90-day cleanup automation</p></div></section>
+  </div>;
 }
