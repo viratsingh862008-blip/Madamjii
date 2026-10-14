@@ -260,7 +260,7 @@ for each row execute function private.add_owner_membership();
 
 create or replace function private.guard_schedule_identity()
 returns trigger language plpgsql set search_path = ''
-as $
+as $$
 begin
   if new.care_space_id is distinct from old.care_space_id
     or new.created_by is distinct from old.created_by
@@ -271,14 +271,14 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 create trigger guard_schedule_identity_before_update
 before update on public.care_schedules
 for each row execute function private.guard_schedule_identity();
 
 create or replace function private.guard_message_identity()
 returns trigger language plpgsql set search_path = ''
-as $
+as $$
 begin
   if new.care_space_id is distinct from old.care_space_id
     or new.sender_user_id is distinct from old.sender_user_id
@@ -288,14 +288,14 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 create trigger guard_message_identity_before_update
 before update on public.care_messages
 for each row execute function private.guard_message_identity();
 
 create or replace function private.guard_checkin_identity()
 returns trigger language plpgsql set search_path = ''
-as $
+as $$
 begin
   if new.care_space_id is distinct from old.care_space_id
     or new.user_id is distinct from old.user_id
@@ -305,7 +305,7 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 create trigger guard_checkin_identity_before_update
 before update on public.check_ins
 for each row execute function private.guard_checkin_identity();
@@ -353,7 +353,7 @@ create or replace function public.create_care_space_with_consent(
   p_consent_scope jsonb
 )
 returns uuid language plpgsql security definer set search_path = ''
-as $
+as $$
 declare v_space_id uuid; v_scope jsonb;
 begin
   if auth.uid() is null then raise exception 'Authentication required' using errcode = '42501'; end if;
@@ -380,7 +380,7 @@ begin
     values (v_space_id, auth.uid(), 'care_space', v_space_id, 'created', '{"consent_recorded":true}'::jsonb);
   return v_space_id;
 end;
-$;
+$$;
 
 create or replace function public.create_care_invitation(p_care_space_id uuid)
 returns text language plpgsql security definer set search_path = ''
@@ -418,7 +418,7 @@ create or replace function public.accept_care_invitation(
   p_timezone text default 'Asia/Kolkata'
 )
 returns uuid language plpgsql security definer set search_path = ''
-as $
+as $$
 declare v_invite public.care_invitations%rowtype; v_active_count integer; v_scope jsonb; v_timezone text;
 begin
   if auth.uid() is null then raise exception 'Authentication required' using errcode = '42501'; end if;
