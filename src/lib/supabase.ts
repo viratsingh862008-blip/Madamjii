@@ -45,15 +45,19 @@ export async function getMemberships(): Promise<CareMembership[]> {
   return (data ?? []) as unknown as CareMembership[];
 }
 
-export async function createCareSpace(name: string, timezone: string): Promise<void> {
+export async function createCareSpace(
+  name: string,
+  timezone: string,
+  scope: { shared_schedules: boolean; daily_summary: boolean; message_history: boolean },
+): Promise<void> {
   if (!supabase) throw new Error("Supabase is not configured.");
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError) throw userError;
   if (!userData.user) throw new Error("Sign in before creating a care space.");
-  const { error } = await supabase.from("care_spaces").insert({
-    name: name.trim(),
-    timezone,
-    created_by: userData.user.id,
+  const { error } = await supabase.rpc("create_care_space_with_consent", {
+    p_name: name.trim(),
+    p_timezone: timezone,
+    p_consent_scope: scope,
   });
   if (error) throw error;
 }
