@@ -23,7 +23,7 @@ The dashboard explicitly labels illustrative content as preview data. Live sched
 2. Run `npm install`.
 3. Copy `.env.example` to `.env.local`.
 4. Add your Supabase project URL and publishable key (or legacy anon key).
-5. Apply `supabase/migrations/202610150001_initial_schema.sql` to a development Supabase project.
+5. The initial schema is applied to the configured development project. For reproducibility, the applied migration is `supabase/migrations/20261014191941_initial_schema.sql`; the follow-up hardening migration is `supabase/migrations/20261014192015_revoke_public_rls_auto_enable_execute.sql`.
 6. In Supabase Auth, enable email OTP/magic links and allow your local/deployed redirect URLs.
 7. Run `npm run dev`.
 
@@ -42,5 +42,5 @@ GitHub Actions runs these checks on the feature branch. The workflow result must
 - Never put Supabase service-role keys or Web Push private keys in frontend environment variables.
 - Only a Supabase publishable key (or legacy anon key) belongs in the browser.
 - The migration uses RLS, restricted RPC execution grants, hashed single-use invitation tokens, explicit invitation consent, and a private helper schema.
-- Review and test the migration in a non-production Supabase project before storing personal or health-related information.
+- The schema has been applied to the configured Supabase project and verified to contain 18 public tables with RLS enabled. Automated advisors still flag intentional `SECURITY DEFINER` RPCs callable by authenticated users and five server-only tables with no client policies; do not store personal or health-related data until end-to-end authorization tests and consent/revocation flows are completed.
 - See `docs/PRD.md` for finalized product decisions and current scope.
